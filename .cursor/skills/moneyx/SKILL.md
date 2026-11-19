@@ -196,6 +196,11 @@ api  →  service  →  repository  →  domain
 - `api` conhece apenas `service` e seus DTOs; nunca acessa o repositório diretamente.
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
+- Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey`.
+  `apikey` nunca importa `merchant`; referencia o comerciante apenas por `merchantId` (UUID).
+  Entidades de módulos diferentes não usam `@ManyToOne` entre si; a integridade é garantida por FK no banco.
+- Respostas que contêm segredos usam `Cache-Control: no-store`, e objetos que carregam segredos
+  sobrescrevem `toString()` para não vazá-los em logs.
 
 ### Erros da API
 
@@ -496,7 +501,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 #### Etapas
 
 - [x] Entidade `ApiKey`, migration `V2__create_api_keys_table` e geração/hash de chaves.
-- [ ] Cadastro retorna a primeira chave.
+- [x] Cadastro retorna a primeira chave.
 - [ ] Spring Security com filtro de API Key.
 - [ ] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
 - [ ] Endpoints de gerenciamento de chaves (criar, listar, revogar).
