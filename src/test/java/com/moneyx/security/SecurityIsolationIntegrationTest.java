@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -53,6 +55,9 @@ class SecurityIsolationIntegrationTest {
     @Autowired
     private ApiKeyRepository apiKeyRepository;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private final List<UUID> createdMerchants = new ArrayList<>();
 
     private Registered merchantA;
@@ -74,6 +79,9 @@ class SecurityIsolationIntegrationTest {
     @AfterEach
     void cleanUp() {
         for (UUID merchantId : createdMerchants) {
+            // Ordem respeita as FKs: idempotência -> pagamentos -> chaves -> comerciante.
+            jdbc.update("DELETE FROM payment_idempotency_keys WHERE merchant_id = ?", merchantId);
+            jdbc.update("DELETE FROM payments WHERE merchant_id = ?", merchantId);
             apiKeyRepository.deleteAll(apiKeyRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId));
             merchantRepository.deleteById(merchantId);
         }
@@ -180,6 +188,45 @@ class SecurityIsolationIntegrationTest {
         // A suspensão de A não interfere em B.
         mockMvc.perform(get("/v1/merchants/me").header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
                 .andExpect(status().isOk());
+    }
+
+    // ---------- pagamentos ----------
+
+    @Test
+    void sameIdempotencyKeyFromTwoMerchantsCreatesTwoIndependentPayments() throws Exception {
+        String sharedKey = "shared-" + UUID.randomUUID();
+
+        String paymentOfA = createPayment(merchantA, sharedKey, 4990);
+        String paymentOfB = createPayment(merchantB, sharedKey, 15000);
+
+        assertThat(paymentOfA).isNotEqualTo(paymentOfB);
+
+        // O replay de A devolve o pagamento de A, nunca o de B (e vice-versa).
+        mockMvc.perform(post("/v1/payments")
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer())
+                        .header("Idempotency-Key", sharedKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(paymentBody(4990)))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.id").value(paymentOfA))
+                .andExpect(jsonPath("$.amount").value(4990));
+    }
+
+    private String createPayment(Registered merchant, String idempotencyKey, long amount) throws Exception {
+        return JsonPath.read(mockMvc.perform(post("/v1/payments")
+                        .header(HttpHeaders.AUTHORIZATION, merchant.bearer())
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(paymentBody(amount)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.id");
+    }
+
+    private static String paymentBody(long amount) {
+        return """
+                {"amount": %d, "currency": "BRL"}
+                """.formatted(amount);
     }
 
     // ---------- auxiliares ----------
