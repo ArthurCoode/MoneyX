@@ -36,9 +36,14 @@ public class Payment {
     /** R$ 100.000,00. Limite por operação. */
     public static final long MAX_AMOUNT = 10_000_000;
 
+    /** 5 minutos. Em segundos para poder ser usado também em anotações de validação da API. */
+    public static final long MIN_EXPIRATION_SECONDS = 300;
+    /** 24 horas. */
+    public static final long MAX_EXPIRATION_SECONDS = 86_400;
+
     public static final Duration DEFAULT_EXPIRATION = Duration.ofMinutes(30);
-    public static final Duration MIN_EXPIRATION = Duration.ofMinutes(5);
-    public static final Duration MAX_EXPIRATION = Duration.ofHours(24);
+    public static final Duration MIN_EXPIRATION = Duration.ofSeconds(MIN_EXPIRATION_SECONDS);
+    public static final Duration MAX_EXPIRATION = Duration.ofSeconds(MAX_EXPIRATION_SECONDS);
 
     public static final int DESCRIPTION_MAX_LENGTH = 255;
     public static final int EXTERNAL_REFERENCE_MAX_LENGTH = 64;
