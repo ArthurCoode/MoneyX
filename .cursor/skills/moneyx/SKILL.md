@@ -165,6 +165,7 @@ MoneyX/
 │   │   │   │   ├── exception/             ← erros de negócio do módulo
 │   │   │   │   └── api/                   ← controllers, DTOs e tratamento de erros do módulo
 │   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
+│   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas)
 │   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       └── api/                   ← GlobalExceptionHandler (Problem Details)
@@ -198,7 +199,7 @@ api  →  service  →  repository  →  domain
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
 - Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
-  `security → merchant, apikey`. Nenhum módulo de negócio importa `security`, exceto a camada `api`
+  `security → merchant, apikey`. `payment` não importa outros módulos de negócio (referencia o comerciante por `merchantId`). Nenhum módulo de negócio importa `security`, exceto a camada `api`
   para ler o `AuthenticatedMerchant` (via `@AuthenticationPrincipal`).
   `apikey` nunca importa `merchant`; referencia o comerciante apenas por `merchantId` (UUID).
   Entidades de módulos diferentes não usam `@ManyToOne` entre si; a integridade é garantida por FK no banco.
@@ -561,8 +562,23 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 4 — Pagamentos
 
-- [ ] Definir modelo de Payment.
-- [ ] Definir estados.
+#### Decisões (definidas em 2026-11-19)
+
+- Valor em **centavos (`long`)**; limites **por operação**: mín. R$ 1,00 (100), máx. R$ 100.000,00 (10.000.000).
+  Limite acumulado por período é controle de risco/antifraude, fora do escopo da v1.
+- Estados: `PENDING` → `PAID` | `CANCELED` | `EXPIRED` (todos finais). Reembolso fora da v1.
+- Pagar após o prazo é proibido mesmo se o status ainda for `PENDING` (o job de expiração pode atrasar).
+- Expiração do Pix: padrão 30 min, permitido de 5 min a 24 h.
+- Campos opcionais `description` (255) e `externalReference` (64, conciliação com o pedido do comerciante).
+- Moeda: apenas `BRL` (enum `PaymentCurrency`), campo modelado desde já.
+- Limites de negócio ficam no domínio (podem mudar sem migration); o banco garante só invariantes
+  (amount > 0, status/moeda válidos, `paid_at` ⇔ PAID, `canceled_at` ⇔ CANCELED).
+- Métodos de domínio recebem `Instant now` (testabilidade); o serviço usará um `Clock`.
+
+#### Etapas
+
+- [x] Definir modelo de Payment (`V3__create_payments_table`).
+- [x] Definir estados.
 - [ ] Implementar criação de pagamentos.
 - [ ] Implementar idempotência.
 - [ ] Simular Pix.
@@ -582,6 +598,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 ### Fase 6 — Qualidade e documentação
 
 - [ ] Rate limiting no cadastro público de comerciantes (avaliar Redis).
+- [ ] Avaliar limite acumulado de volume por comerciante (dia/mês) como controle de risco.
 - [ ] Expandir testes automatizados.
 - [ ] Documentar API.
 - [ ] Criar Docker Compose completo.
