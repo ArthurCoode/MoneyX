@@ -164,6 +164,7 @@ MoneyX/
 │   │   │   │   ├── service/               ← casos de uso e transações
 │   │   │   │   ├── exception/             ← erros de negócio do módulo
 │   │   │   │   └── api/                   ← controllers, DTOs e tratamento de erros do módulo
+│   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       └── api/                   ← GlobalExceptionHandler (Problem Details)
 │   │   └── resources/
@@ -463,11 +464,43 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 3 — Segurança
 
-- [ ] Implementar autenticação.
-- [ ] Criar API Keys.
-- [ ] Armazenar hashes.
-- [ ] Implementar isolamento por Merchant.
-- [ ] Criar testes de autorização.
+#### Decisões arquiteturais (definidas em 2026-11-18)
+
+**Produto**
+
+- **Cadastro público (auto-cadastro):** `POST /v1/merchants` não exige autenticação.
+- **Primeira chave:** retornada na resposta do cadastro, uma única vez.
+- **Múltiplas chaves ativas** por comerciante, revogáveis individualmente (rotação sem downtime).
+- **Consulta própria via `GET /v1/merchants/me`:** o comerciante é identificado pela chave, nunca pela URL.
+  `GET /v1/merchants/{id}` é removido (não há administrador no modelo atual).
+
+**Técnicas**
+
+- Formato da chave: `mx_test_` + 32 bytes aleatórios (`SecureRandom`, Base64 URL-safe, sem padding).
+- Envio: header `Authorization: Bearer <chave>`.
+- Armazenamento: hash **SHA-256** (não BCrypt: chaves aleatórias de 256 bits têm alta entropia e o hash
+  determinístico permite busca indexada). A chave completa nunca é armazenada nem retornada novamente.
+- Um prefixo curto (ex.: `mx_test_9fK2`) é armazenado em texto puro para identificação da chave.
+- Spring Security stateless: filtro próprio de API Key, sem sessão, CSRF desabilitado (não há cookies).
+- Chave inexistente ou revogada → **401**. Comerciante `SUSPENDED`/`CLOSED` → **403**.
+- Recurso pertencente a outro comerciante → **404** (não revelar existência).
+- O comerciante autenticado vem sempre do contexto de segurança, nunca de parâmetros da requisição.
+
+**Riscos conhecidos e aceitos**
+
+- Enumeração: o `409` do cadastro público revela se documento/e-mail já existem.
+- Abuso: criação em massa de contas.
+- Mitigação: cadastro público gera apenas chaves de teste (`mx_test_`), sem movimentação real.
+  Rate limiting no cadastro previsto para a Fase 6. Chaves `mx_live_` exigirão verificação (e-mail/KYC) na Fase 7.
+
+#### Etapas
+
+- [x] Entidade `ApiKey`, migration `V2__create_api_keys_table` e geração/hash de chaves.
+- [ ] Cadastro retorna a primeira chave.
+- [ ] Spring Security com filtro de API Key.
+- [ ] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
+- [ ] Endpoints de gerenciamento de chaves (criar, listar, revogar).
+- [ ] Testes de autenticação, autorização e isolamento entre comerciantes.
 
 ### Fase 4 — Pagamentos
 
@@ -491,6 +524,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 6 — Qualidade e documentação
 
+- [ ] Rate limiting no cadastro público de comerciantes (avaliar Redis).
 - [ ] Expandir testes automatizados.
 - [ ] Documentar API.
 - [ ] Criar Docker Compose completo.
