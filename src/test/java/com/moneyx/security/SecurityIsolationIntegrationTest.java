@@ -213,6 +213,22 @@ class SecurityIsolationIntegrationTest {
                 .andExpect(jsonPath("$.amount").value(4990));
     }
 
+    @Test
+    void merchantCannotPayAnotherMerchantsPix() throws Exception {
+        String paymentOfA = createPayment(merchantA, "key-" + UUID.randomUUID(), 4990);
+
+        mockMvc.perform(post("/v1/sandbox/payments/{id}/pay", paymentOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Payment not found"));
+
+        // O dono consegue pagar normalmente (prova que o 404 acima foi por isolamento).
+        mockMvc.perform(post("/v1/sandbox/payments/{id}/pay", paymentOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PAID"));
+    }
+
     private String createPayment(Registered merchant, String idempotencyKey, long amount) throws Exception {
         return JsonPath.read(mockMvc.perform(post("/v1/payments")
                         .header(HttpHeaders.AUTHORIZATION, merchant.bearer())
