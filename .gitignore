@@ -3,6 +3,7 @@ target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+.cursor/skills/moneyx/PROGRESS.md
 
 ### STS ###
 .apt_generated
