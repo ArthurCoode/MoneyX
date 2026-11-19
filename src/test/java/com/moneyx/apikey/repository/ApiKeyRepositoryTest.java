@@ -82,4 +82,28 @@ class ApiKeyRepositoryTest {
         assertThatThrownBy(() -> apiKeyRepository.saveAndFlush(orphan))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
+
+    @Test
+    void findsKeyByIdOnlyForItsOwner() {
+        Merchant other = merchantRepository.saveAndFlush(
+                new Merchant("Outra Loja", "77766655544", "apikey-other@moneyx.dev"));
+        ApiKey key = apiKeyRepository.saveAndFlush(ApiKey.issue(merchant.getId(), ApiKeyGenerator.generate()));
+
+        assertThat(apiKeyRepository.findByIdAndMerchantId(key.getId(), merchant.getId())).isPresent();
+        assertThat(apiKeyRepository.findByIdAndMerchantId(key.getId(), other.getId())).isEmpty();
+    }
+
+    @Test
+    void countsAndLocksOnlyActiveKeysOfTheMerchant() {
+        ApiKey active = apiKeyRepository.saveAndFlush(ApiKey.issue(merchant.getId(), ApiKeyGenerator.generate()));
+        ApiKey revoked = ApiKey.issue(merchant.getId(), ApiKeyGenerator.generate());
+        revoked.revoke();
+        apiKeyRepository.saveAndFlush(revoked);
+
+        assertThat(apiKeyRepository.countByMerchantIdAndRevokedAtIsNull(merchant.getId())).isEqualTo(1);
+        // Executa de verdade o SELECT ... FOR UPDATE no PostgreSQL.
+        assertThat(apiKeyRepository.lockActiveByMerchantId(merchant.getId()))
+                .extracting(ApiKey::getId)
+                .containsExactly(active.getId());
+    }
 }

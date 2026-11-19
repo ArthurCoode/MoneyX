@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.util.List;
@@ -46,6 +47,24 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail body = ex.getBody();
         body.setDetail("One or more fields are invalid");
         body.setProperty("errors", errors);
+
+        return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /**
+     * Rota inexistente. A mensagem padrão do Spring ("No static resource v1/...") expõe um
+     * detalhe interno do servidor (o tratamento de arquivos estáticos). Respondemos uma
+     * mensagem genérica, sem dar pistas sobre a estrutura da aplicação.
+     */
+    @Override
+    protected ResponseEntity<Object> handleNoResourceFoundException(
+            NoResourceFoundException ex,
+            HttpHeaders headers,
+            HttpStatusCode status,
+            WebRequest request) {
+
+        ProblemDetail body = ex.getBody();
+        body.setDetail("The requested resource was not found");
 
         return handleExceptionInternal(ex, body, headers, status, request);
     }

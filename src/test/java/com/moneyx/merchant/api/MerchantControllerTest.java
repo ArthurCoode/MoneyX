@@ -202,7 +202,9 @@ class MerchantControllerTest {
 
         mockMvc.perform(get("/v1/merchants/{id}", otherMerchantId).with(activeMerchant(UUID.randomUUID())))
                 .andExpect(status().isNotFound())
-                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                // Mensagem genérica: não expõe detalhes internos ("No static resource ...").
+                .andExpect(jsonPath("$.detail").value("The requested resource was not found"));
 
         verify(service, never()).getById(any());
     }
