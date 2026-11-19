@@ -158,12 +158,14 @@ MoneyX/
 │   ├── main/
 │   │   ├── java/com/moneyx/
 │   │   │   ├── MoneyxApplication.java
-│   │   │   └── merchant/                  ← módulo
-│   │   │       ├── domain/                ← entidades e regras de negócio
-│   │   │       ├── repository/            ← acesso a dados (Spring Data JPA)
-│   │   │       ├── service/               ← casos de uso e transações
-│   │   │       ├── exception/             ← erros de negócio do módulo
-│   │   │       └── api/                   ← controllers e DTOs (em construção)
+│   │   │   ├── merchant/                  ← módulo
+│   │   │   │   ├── domain/                ← entidades e regras de negócio
+│   │   │   │   ├── repository/            ← acesso a dados (Spring Data JPA)
+│   │   │   │   ├── service/               ← casos de uso e transações
+│   │   │   │   ├── exception/             ← erros de negócio do módulo
+│   │   │   │   └── api/                   ← controllers, DTOs e tratamento de erros do módulo
+│   │   │   └── shared/                    ← código transversal, sem dependência de módulos
+│   │   │       └── api/                   ← GlobalExceptionHandler (Problem Details)
 │   │   └── resources/
 │   │       ├── application.properties
 │   │       └── db/migration/              ← migrations Flyway (V1__..., V2__...)
@@ -192,6 +194,17 @@ api  →  service  →  repository  →  domain
 - `service` orquestra `domain` e `repository` e lança as exceções do módulo.
 - `api` conhece apenas `service` e seus DTOs; nunca acessa o repositório diretamente.
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
+- `shared` contém apenas código transversal e nunca importa classes de módulos.
+
+### Erros da API
+
+- Todas as respostas de erro seguem o padrão Problem Details (RFC 9457), `Content-Type: application/problem+json`.
+- `shared/api/GlobalExceptionHandler` trata erros genéricos do MVC (validação, JSON malformado, tipo de parâmetro inválido).
+  Erros de validação incluem a propriedade `errors` com a lista `{field, message}`.
+- Cada módulo traduz suas próprias exceções de negócio em `<modulo>/api/<Modulo>ExceptionHandler`.
+- Serviços lançam exceções de domínio e não conhecem HTTP.
+- Todas as mensagens da API são em inglês. O idioma é fixado por `spring.web.locale=en` e
+  `spring.web.locale-resolver=fixed`, independente do idioma do servidor ou do `Accept-Language`.
 
 ### Migrations
 
@@ -443,10 +456,10 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Criar repositório.
 - [x] Criar serviço.
 - [x] Organizar o módulo em camadas (`domain`, `repository`, `service`, `exception`).
-- [ ] Criar DTOs e validações.
-- [ ] Implementar endpoints.
-- [ ] Implementar tratamento padronizado de erros.
-- [ ] Criar testes (domínio, serviço e repositório concluídos; faltam os da camada web).
+- [x] Criar DTOs e validações.
+- [x] Implementar endpoints (`POST /v1/merchants`, `GET /v1/merchants/{id}`).
+- [x] Implementar tratamento padronizado de erros (Problem Details).
+- [x] Criar testes (domínio, serviço, repositório e camada web).
 
 ### Fase 3 — Segurança
 
@@ -494,8 +507,9 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ## 12. Diretrizes de Git
 
-- Utilizar branches para funcionalidades.
-- Não trabalhar diretamente na `main` para mudanças relevantes.
+- **Decisão atual:** enquanto o projeto estiver em fase de aprendizado/ambiente de testes, os commits são feitos diretamente na `main`, sem abertura de PR.
+- Quando o projeto amadurecer (ex.: CI ativo ou colaboradores), voltar a utilizar branches de funcionalidade e Pull Requests.
+- A IA não faz commits; ela sugere os comandos e mensagens, e o desenvolvedor executa.
 - Criar commits pequenos e descritivos.
 - Não incluir segredos.
 - Não realizar push sem conferir os arquivos staged.
