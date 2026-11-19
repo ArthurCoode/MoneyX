@@ -165,6 +165,7 @@ MoneyX/
 │   │   │   │   ├── exception/             ← erros de negócio do módulo
 │   │   │   │   └── api/                   ← controllers, DTOs e tratamento de erros do módulo
 │   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
+│   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       └── api/                   ← GlobalExceptionHandler (Problem Details)
 │   │   └── resources/
@@ -196,11 +197,28 @@ api  →  service  →  repository  →  domain
 - `api` conhece apenas `service` e seus DTOs; nunca acessa o repositório diretamente.
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
-- Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey`.
+- Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
+  `security → merchant, apikey`. Nenhum módulo de negócio importa `security`, exceto a camada `api`
+  para ler o `AuthenticatedMerchant` (via `@AuthenticationPrincipal`).
   `apikey` nunca importa `merchant`; referencia o comerciante apenas por `merchantId` (UUID).
   Entidades de módulos diferentes não usam `@ManyToOne` entre si; a integridade é garantida por FK no banco.
 - Respostas que contêm segredos usam `Cache-Control: no-store`, e objetos que carregam segredos
   sobrescrevem `toString()` para não vazá-los em logs.
+
+### Segurança (Spring Security)
+
+- `security/SecurityConfig` define a única `SecurityFilterChain`: stateless, CSRF/httpBasic/formLogin/logout
+  desabilitados. Rotas públicas: `POST /v1/merchants`, `GET /actuator/health` e o despacho interno `ERROR`.
+  Todo o resto exige a autoridade `ACTIVE_MERCHANT`.
+- `security/ApiKeyAuthenticationFilter` (não é `@Component`, é instanciado no `SecurityConfig`):
+  sem header → segue anônimo (rota protegida → 401); header inválido → 401 imediato, mesmo em rota pública;
+  chave válida → `AuthenticatedMerchant(merchantId, apiKeyId)` no `SecurityContext`, com `ACTIVE_MERCHANT`
+  apenas se o comerciante estiver `ACTIVE` (senão, 403 pela regra de autorização).
+- O entry point (401) e o access denied handler (403) repassam a exceção ao `HandlerExceptionResolver`
+  do MVC; `security/SecurityExceptionHandler` gera o Problem Details (401 inclui `WWW-Authenticate: Bearer`).
+- O usuário padrão do Boot é desligado em `application.properties`
+  (`spring.autoconfigure.exclude=...UserDetailsServiceAutoConfiguration`).
+- Controllers obtêm o comerciante com `@AuthenticationPrincipal AuthenticatedMerchant`, nunca pela URL.
 
 ### Erros da API
 
@@ -225,7 +243,10 @@ api  →  service  →  repository  →  domain
 | Unitário de domínio | JUnit 5 + AssertJ | `MerchantTest` |
 | Unitário de serviço | Mockito | `MerchantServiceTest` |
 | Integração de persistência | `@DataJpaTest` + PostgreSQL real | `MerchantRepositoryTest` |
-| Camada web | `@WebMvcTest` + MockMvc | `MerchantControllerTest` |
+| Camada web | `@WebMvcTest` + MockMvc + `@Import(SecurityConfig.class)` | `MerchantControllerTest` |
+| Segurança | `@WebMvcTest` + mocks dos serviços do filtro | `ApiKeyAuthenticationTest` |
+
+Testes de controller autenticados usam `TestAuthentication.activeMerchant(merchantId)` (em `src/test/.../security`).
 
 Executar todos os testes (requer o container PostgreSQL ativo e `POSTGRES_PASSWORD` definido):
 
@@ -502,7 +523,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 - [x] Entidade `ApiKey`, migration `V2__create_api_keys_table` e geração/hash de chaves.
 - [x] Cadastro retorna a primeira chave.
-- [ ] Spring Security com filtro de API Key.
+- [x] Spring Security com filtro de API Key.
 - [ ] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
 - [ ] Endpoints de gerenciamento de chaves (criar, listar, revogar).
 - [ ] Testes de autenticação, autorização e isolamento entre comerciantes.
@@ -568,6 +589,8 @@ docs: document MoneyX architecture
 
 Ao receber uma solicitação relacionada ao MoneyX:
 
+0. **No início de cada sessão, ler também `.cursor/skills/moneyx/PROGRESS.md`**: histórico, ponto exato onde o
+   trabalho parou, plano detalhado da próxima etapa e armadilhas já conhecidas. Atualizá-lo ao concluir cada etapa.
 1. Consultar esta skill.
 2. Considerar o estado atual do repositório, sem presumir que o roadmap já foi implementado.
 3. Respeitar as decisões técnicas registradas.
