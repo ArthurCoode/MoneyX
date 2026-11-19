@@ -10,11 +10,13 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -64,5 +66,39 @@ class ApiKeyServiceTest {
         IssuedApiKey issued = service.issueFor(UUID.randomUUID());
 
         assertThat(issued.toString()).doesNotContain(issued.plainText()).contains("***");
+    }
+
+    @Test
+    void findsActiveKeyByTheHashOfThePlainText() {
+        ApiKeyGenerator.GeneratedApiKey generated = ApiKeyGenerator.generate();
+        ApiKey stored = ApiKey.issue(UUID.randomUUID(), generated);
+        // A busca deve ser feita pelo HASH do segredo, nunca pelo segredo em si.
+        when(repository.findByKeyHash(generated.hash())).thenReturn(Optional.of(stored));
+
+        assertThat(service.findActiveByPlainText(generated.plainText())).contains(stored);
+    }
+
+    @Test
+    void revokedKeyIsNotReturned() {
+        ApiKeyGenerator.GeneratedApiKey generated = ApiKeyGenerator.generate();
+        ApiKey stored = ApiKey.issue(UUID.randomUUID(), generated);
+        stored.revoke();
+        when(repository.findByKeyHash(generated.hash())).thenReturn(Optional.of(stored));
+
+        assertThat(service.findActiveByPlainText(generated.plainText())).isEmpty();
+    }
+
+    @Test
+    void unknownKeyIsNotReturned() {
+        when(repository.findByKeyHash(any())).thenReturn(Optional.empty());
+
+        assertThat(service.findActiveByPlainText("mx_test_unknown")).isEmpty();
+    }
+
+    @Test
+    void blankKeyIsRejectedWithoutQueryingTheDatabase() {
+        assertThat(service.findActiveByPlainText(" ")).isEmpty();
+        assertThat(service.findActiveByPlainText(null)).isEmpty();
+        verifyNoInteractions(repository);
     }
 }

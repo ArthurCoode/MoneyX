@@ -3,15 +3,18 @@ package com.moneyx.merchant.api;
 import com.moneyx.apikey.domain.ApiKey;
 import com.moneyx.apikey.domain.ApiKeyGenerator;
 import com.moneyx.apikey.domain.ApiKeyGenerator.GeneratedApiKey;
+import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.apikey.service.IssuedApiKey;
 import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.exception.DuplicateMerchantException;
 import com.moneyx.merchant.exception.MerchantNotFoundException;
 import com.moneyx.merchant.service.MerchantRegistration;
 import com.moneyx.merchant.service.MerchantService;
+import com.moneyx.security.SecurityConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -25,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static com.moneyx.security.TestAuthentication.activeMerchant;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -38,8 +42,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * @WebMvcTest sobe apenas a infraestrutura MVC (controllers, JSON, validação),
  * sem banco. O serviço é substituído por um mock via @MockitoBean.
  * O MockMvc simula requisições HTTP sem abrir uma porta real.
+ *
+ * @Import(SecurityConfig.class): sem ele, o @WebMvcTest usaria a segurança padrão do
+ * Spring Boot (CSRF ligado, tudo protegido) e não a configuração real da API.
+ * ApiKeyService é mockado porque o filtro de API Key depende dele.
  */
 @WebMvcTest(MerchantController.class)
+@Import(SecurityConfig.class)
 class MerchantControllerTest {
 
     @Autowired
@@ -47,6 +56,9 @@ class MerchantControllerTest {
 
     @MockitoBean
     private MerchantService service;
+
+    @MockitoBean
+    private ApiKeyService apiKeyService;
 
     @Test
     void createReturns201WithMerchantAndApiKey() throws Exception {
@@ -152,7 +164,7 @@ class MerchantControllerTest {
         UUID id = UUID.randomUUID();
         when(service.getById(id)).thenThrow(new MerchantNotFoundException(id));
 
-        mockMvc.perform(get("/v1/merchants/{id}", id))
+        mockMvc.perform(get("/v1/merchants/{id}", id).with(activeMerchant(UUID.randomUUID())))
                 .andExpect(status().isNotFound())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(404))
@@ -164,7 +176,7 @@ class MerchantControllerTest {
         Merchant merchant = new Merchant("Loja LTDA", "12345678901", "contato@loja.com");
         when(service.getById(merchant.getId())).thenReturn(merchant);
 
-        mockMvc.perform(get("/v1/merchants/{id}", merchant.getId()))
+        mockMvc.perform(get("/v1/merchants/{id}", merchant.getId()).with(activeMerchant(merchant.getId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.legalName").value("Loja LTDA"))
                 .andExpect(jsonPath("$.email").value("contato@loja.com"));
@@ -172,7 +184,7 @@ class MerchantControllerTest {
 
     @Test
     void getByIdReturns400WhenIdIsNotUuid() throws Exception {
-        mockMvc.perform(get("/v1/merchants/{id}", "abc"))
+        mockMvc.perform(get("/v1/merchants/{id}", "abc").with(activeMerchant(UUID.randomUUID())))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
     }
