@@ -604,7 +604,25 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Definir estados.
 - [x] Implementar criação de pagamentos (`POST /v1/payments`).
 - [x] Implementar idempotência.
-- [ ] Simular Pix.
+- [x] Simular Pix.
+
+#### Pix (definido em 2026-11-19)
+
+- Cada pagamento nasce com uma cobrança Pix: `pix.txid` (25 caracteres A-Z0-9, `SecureRandom`, UNIQUE) e
+  `pix.copyPaste` (BR Code **estático** com valor e txid, padrão EMV do Manual de Padrões para Iniciação do Pix).
+  Campos: 00, 26 (00 `br.gov.bcb.pix` + 01 chave), 52 `0000`, 53 `986`, 54 valor, 58 `BR`, 59 nome, 60 cidade,
+  62.05 txid, 63 CRC16-CCITT-FALSE (poly 0x1021, init 0xFFFF). Gerador puro: `payment/domain/PixBrCode`.
+- `String.format` sempre com `Locale.ROOT` (dígitos ASCII independentemente do idioma do servidor).
+- Validado contra o exemplo do manual do BCB (CRC `1D3D`), o check value do CRC (`29B1`) e vetores de
+  implementação independente (Python).
+- **Sandbox:** recebedor fictício (`PixCharge.SANDBOX_*`; chave do exemplo do manual, não registrada no DICT,
+  portanto não pagável de verdade). Na Fase 7 o BR Code (dinâmico) virá do PSP autorizado.
+- Só o texto é devolvido (sem imagem do QR); o comerciante gera a imagem a partir do `copyPaste`.
+- `POST /v1/sandbox/payments/{id}/pay` simula o pagamento: 200 (PAID); 404 se não existir/for de outro comerciante;
+  409 `payment_not_pending` (com `paymentStatus`) ou `payment_expired`. Bloquear para chaves `mx_live_` na Fase 7.
+- Toda mudança de estado de pagamento usa `PaymentRepository.lockByIdAndMerchantId` (lock pessimista).
+  O `@Version` é a segunda camada; `ObjectOptimisticLockingFailureException` vira 409 `concurrent_update`.
+  Comprovado por mutação: sem o lock, o `@Version` ainda impede pagamento duplo, mas os concorrentes recebiam 500.
 - [ ] Implementar consulta.
 - [ ] Implementar cancelamento.
 - [ ] Criar testes de transição de estado.
