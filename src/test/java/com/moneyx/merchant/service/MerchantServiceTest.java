@@ -1,5 +1,10 @@
 package com.moneyx.merchant.service;
 
+import com.moneyx.apikey.domain.ApiKey;
+import com.moneyx.apikey.domain.ApiKeyGenerator;
+import com.moneyx.apikey.domain.ApiKeyGenerator.GeneratedApiKey;
+import com.moneyx.apikey.service.ApiKeyService;
+import com.moneyx.apikey.service.IssuedApiKey;
 import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.domain.MerchantStatus;
 import com.moneyx.merchant.exception.DuplicateMerchantException;
@@ -35,20 +40,34 @@ class MerchantServiceTest {
     @Mock
     private MerchantRepository repository;
 
+    @Mock
+    private ApiKeyService apiKeyService;
+
     @InjectMocks
     private MerchantService service;
 
     @Test
-    void registersMerchantWhenDocumentAndEmailAreAvailable() {
+    void registersMerchantAndIssuesFirstApiKey() {
         when(repository.existsByDocument("12345678000190")).thenReturn(false);
         when(repository.existsByEmail("contato@loja.com")).thenReturn(false);
         when(repository.saveAndFlush(any(Merchant.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(apiKeyService.issueFor(any(UUID.class))).thenAnswer(inv -> {
+            GeneratedApiKey generated = ApiKeyGenerator.generate();
+            return new IssuedApiKey(ApiKey.issue(inv.getArgument(0), generated), generated.plainText());
+        });
 
-        Merchant merchant = service.register("Loja LTDA", "12.345.678/0001-90", "Contato@Loja.com");
+        MerchantRegistration registration =
+                service.register("Loja LTDA", "12.345.678/0001-90", "Contato@Loja.com");
 
+        Merchant merchant = registration.merchant();
         assertThat(merchant.getDocument()).isEqualTo("12345678000190");
         assertThat(merchant.getStatus()).isEqualTo(MerchantStatus.ACTIVE);
         verify(repository).saveAndFlush(merchant);
+
+        // A chave é emitida para o comerciante recém-criado
+        verify(apiKeyService).issueFor(merchant.getId());
+        assertThat(registration.apiKey().apiKey().getMerchantId()).isEqualTo(merchant.getId());
+        assertThat(registration.apiKey().plainText()).startsWith("mx_test_");
     }
 
     @Test
@@ -60,6 +79,7 @@ class MerchantServiceTest {
                 .hasMessageContaining("document");
 
         verify(repository, never()).saveAndFlush(any());
+        verify(apiKeyService, never()).issueFor(any());
     }
 
     @Test
@@ -83,6 +103,8 @@ class MerchantServiceTest {
 
         assertThatThrownBy(() -> service.register("Loja LTDA", "12345678000190", "a@loja.com"))
                 .isInstanceOf(DuplicateMerchantException.class);
+
+        verify(apiKeyService, never()).issueFor(any());
     }
 
     @Test

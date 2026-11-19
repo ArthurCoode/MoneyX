@@ -1,5 +1,7 @@
 package com.moneyx.merchant.service;
 
+import com.moneyx.apikey.service.ApiKeyService;
+import com.moneyx.apikey.service.IssuedApiKey;
 import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.exception.DuplicateMerchantException;
 import com.moneyx.merchant.exception.MerchantNotFoundException;
@@ -26,14 +28,26 @@ import java.util.UUID;
 public class MerchantService {
 
     private final MerchantRepository repository;
+    private final ApiKeyService apiKeyService;
 
     // Injeção via construtor: dependência explícita, campo final e fácil de testar com mocks.
-    public MerchantService(MerchantRepository repository) {
+    public MerchantService(MerchantRepository repository, ApiKeyService apiKeyService) {
         this.repository = repository;
+        this.apiKeyService = apiKeyService;
     }
 
+    /**
+     * Cadastra o comerciante e emite sua primeira API Key na MESMA transação:
+     * se a emissão da chave falhar, o comerciante também não é criado (atomicidade).
+     */
     @Transactional
-    public Merchant register(String legalName, String document, String email) {
+    public MerchantRegistration register(String legalName, String document, String email) {
+        Merchant merchant = createMerchant(legalName, document, email);
+        IssuedApiKey apiKey = apiKeyService.issueFor(merchant.getId());
+        return new MerchantRegistration(merchant, apiKey);
+    }
+
+    private Merchant createMerchant(String legalName, String document, String email) {
         // A entidade valida e normaliza os dados. Assim a checagem de duplicidade
         // usa o mesmo formato salvo no banco (ex.: "123.456.789-01" -> "12345678901").
         Merchant merchant = new Merchant(legalName, document, email);
