@@ -1,6 +1,8 @@
 package com.moneyx.merchant.api;
 
 import com.moneyx.merchant.domain.Merchant;
+import com.moneyx.merchant.exception.DuplicateMerchantException;
+import com.moneyx.merchant.exception.MerchantNotFoundException;
 import com.moneyx.merchant.service.MerchantService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,13 +11,18 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.UUID;
+
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -59,7 +66,7 @@ class MerchantControllerTest {
     }
 
     @Test
-    void createReturns400WhenFieldsAreInvalid() throws Exception {
+    void createReturns400WithFieldErrorsWhenFieldsAreInvalid() throws Exception {
         mockMvc.perform(post("/v1/merchants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -69,9 +76,74 @@ class MerchantControllerTest {
                                   "email": "not-an-email"
                                 }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.errors", hasSize(3)))
+                .andExpect(jsonPath("$.errors[*].field",
+                        containsInAnyOrder("legalName", "document", "email")));
 
         verify(service, never()).register(any(), any(), any());
+    }
+
+    @Test
+    void validationMessagesAreAlwaysInEnglish() throws Exception {
+        mockMvc.perform(post("/v1/merchants")
+                        .header("Accept-Language", "pt-BR")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "legalName": "",
+                                  "document": "12345678901",
+                                  "email": "contato@loja.com"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("legalName"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not be blank"));
+    }
+
+    @Test
+    void createReturns409WhenMerchantAlreadyExists() throws Exception {
+        when(service.register(any(), any(), any()))
+                .thenThrow(new DuplicateMerchantException("A merchant with this document already exists"));
+
+        mockMvc.perform(post("/v1/merchants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "legalName": "Loja LTDA",
+                                  "document": "12345678000190",
+                                  "email": "contato@loja.com"
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.detail").value("A merchant with this document already exists"));
+    }
+
+    @Test
+    void createReturns400WhenBodyIsMalformedJson() throws Exception {
+        mockMvc.perform(post("/v1/merchants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ not json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+
+        verify(service, never()).register(any(), any(), any());
+    }
+
+    @Test
+    void getByIdReturns404WhenMerchantDoesNotExist() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.getById(id)).thenThrow(new MerchantNotFoundException(id));
+
+        mockMvc.perform(get("/v1/merchants/{id}", id))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.detail").value("Merchant not found: " + id));
     }
 
     @Test
@@ -88,6 +160,7 @@ class MerchantControllerTest {
     @Test
     void getByIdReturns400WhenIdIsNotUuid() throws Exception {
         mockMvc.perform(get("/v1/merchants/{id}", "abc"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
     }
 }
