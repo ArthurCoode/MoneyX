@@ -121,7 +121,7 @@ Windows 11.
 
 ### IDE
 
-Cursor.
+intellIj.
 
 ### Java
 
@@ -385,13 +385,10 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Configurar credenciais locais.
 - [x] Conectar Spring Boot ao PostgreSQL.
 - [x] Validar inicialização da aplicação.
-- [ ] Registrar commit da infraestrutura.
-- [ ] Documentar a skill do projeto.
+- [x] Registrar commit da infraestrutura.
+- [x] Documentar a skill do projeto.
 
 ### Fase 2 — Domínio e comerciantes
-
-- [ ] Estudar o conceito de Merchant.
-- [ ] Definir dados e regras do estabelecimento.
 - [ ] Criar entidade Merchant.
 - [ ] Criar repositório.
 - [ ] Criar serviço.
