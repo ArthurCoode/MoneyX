@@ -69,4 +69,16 @@ class MerchantTest {
         assertThatThrownBy(merchant::suspend).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(merchant::close).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void onlyActiveMerchantIsActive() {
+        Merchant merchant = newMerchant();
+        assertThat(merchant.isActive()).isTrue();
+
+        merchant.suspend();
+        assertThat(merchant.isActive()).isFalse();
+
+        merchant.close();
+        assertThat(merchant.isActive()).isFalse();
+    }
 }

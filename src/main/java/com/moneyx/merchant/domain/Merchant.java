@@ -85,6 +85,11 @@ public class Merchant {
         changeStatus(MerchantStatus.CLOSED);
     }
 
+    /** Apenas comerciantes ACTIVE podem operar (usar a API). SUSPENDED e CLOSED ficam bloqueados. */
+    public boolean isActive() {
+        return status == MerchantStatus.ACTIVE;
+    }
+
     private void changeStatus(MerchantStatus newStatus) {
         this.status = newStatus;
         this.updatedAt = Instant.now();

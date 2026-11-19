@@ -7,6 +7,7 @@ import com.moneyx.apikey.repository.ApiKeyRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -36,5 +37,23 @@ public class ApiKeyService {
         GeneratedApiKey generated = ApiKeyGenerator.generate();
         ApiKey apiKey = repository.save(ApiKey.issue(merchantId, generated));
         return new IssuedApiKey(apiKey, generated.plainText());
+    }
+
+    /**
+     * Usado na autenticação: localiza a chave ativa correspondente ao segredo recebido.
+     *
+     * O segredo é transformado em hash e buscado pelo índice UNIQUE de key_hash.
+     * Nunca comparamos segredos em texto puro e nunca lemos o hash do banco para comparar em Java.
+     *
+     * Chave inexistente e chave revogada resultam no mesmo Optional.empty(): quem chama
+     * não deve (e não consegue) diferenciar os dois casos, para não dar pistas a um atacante.
+     */
+    @Transactional(readOnly = true)
+    public Optional<ApiKey> findActiveByPlainText(String plainText) {
+        if (plainText == null || plainText.isBlank()) {
+            return Optional.empty();
+        }
+        return repository.findByKeyHash(ApiKeyGenerator.hash(plainText))
+                .filter(ApiKey::isActive);
     }
 }
