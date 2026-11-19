@@ -218,7 +218,9 @@ api  →  service  →  repository  →  domain
   do MVC; `security/SecurityExceptionHandler` gera o Problem Details (401 inclui `WWW-Authenticate: Bearer`).
 - O usuário padrão do Boot é desligado em `application.properties`
   (`spring.autoconfigure.exclude=...UserDetailsServiceAutoConfiguration`).
-- Controllers obtêm o comerciante com `@AuthenticationPrincipal AuthenticatedMerchant`, nunca pela URL.
+- Controllers obtêm o comerciante com `@AuthenticationPrincipal AuthenticatedMerchant`, nunca pela URL
+  (proteção contra IDOR). Ex.: `GET /v1/merchants/me`. Não criar rotas que recebam o `merchantId` do cliente.
+- Endpoints atuais de comerciante: `POST /v1/merchants` (público, `Location: /v1/merchants/me`) e `GET /v1/merchants/me`.
 
 ### Erros da API
 
@@ -524,7 +526,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Entidade `ApiKey`, migration `V2__create_api_keys_table` e geração/hash de chaves.
 - [x] Cadastro retorna a primeira chave.
 - [x] Spring Security com filtro de API Key.
-- [ ] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
+- [x] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
 - [ ] Endpoints de gerenciamento de chaves (criar, listar, revogar).
 - [ ] Testes de autenticação, autorização e isolamento entre comerciantes.
 
