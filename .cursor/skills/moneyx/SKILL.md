@@ -93,7 +93,7 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 | PostgreSQL 17 | Banco de dados principal |
 | Spring Data JPA | Persistência |
 | Hibernate | ORM |
-| Flyway | Versionamento do banco, previsto |
+| Flyway | Versionamento do banco (em uso desde a Fase 2) |
 | Redis | Cache e recursos auxiliares, futuro |
 | RabbitMQ | Mensageria assíncrona, futuro |
 | Docker | Infraestrutura local |
@@ -112,6 +112,11 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 - Redis não substituirá o banco relacional.
 - RabbitMQ será introduzido quando houver necessidade de processamento assíncrono.
 - A arquitetura começará como monólito modular.
+- O esquema do banco é gerenciado exclusivamente pelo Flyway; o Hibernate apenas valida (`ddl-auto=validate`).
+- Identificadores de entidades expostas na API são `UUID` gerados na aplicação, não sequenciais.
+- Entidades não expõem setters: alterações de estado ocorrem por métodos de domínio que validam a transição.
+- Regras de unicidade são verificadas no serviço (mensagem clara) e garantidas por constraints no banco (proteção contra condição de corrida).
+- Entidades JPA nunca são expostas diretamente na API; a camada `api` utiliza DTOs.
 
 ## 6. Ambiente atual
 
@@ -121,7 +126,7 @@ Windows 11.
 
 ### IDE
 
-intellIj.
+IntelliJ IDEA.
 
 ### Java
 
@@ -143,31 +148,74 @@ Executar comandos Maven pelo wrapper:
 C:\Users\Arthur Marques\Desktop\MoneyX
 ```
 
-### Estrutura inicial
+### Estrutura atual
 
 ```text
 MoneyX/
-├── .cursor/
-│   └── skills/
-│       └── moneyx/
-│           └── SKILL.md
+├── .cursor/skills/moneyx/SKILL.md
 ├── .mvn/
 ├── src/
 │   ├── main/
-│   │   ├── java/
-│   │   │   └── com/
-│   │   │       └── moneyx/
+│   │   ├── java/com/moneyx/
+│   │   │   ├── MoneyxApplication.java
+│   │   │   └── merchant/                  ← módulo
+│   │   │       ├── domain/                ← entidades e regras de negócio
+│   │   │       ├── repository/            ← acesso a dados (Spring Data JPA)
+│   │   │       ├── service/               ← casos de uso e transações
+│   │   │       ├── exception/             ← erros de negócio do módulo
+│   │   │       └── api/                   ← controllers e DTOs (em construção)
 │   │   └── resources/
-│   │       └── application.properties
-│   └── test/
+│   │       ├── application.properties
+│   │       └── db/migration/              ← migrations Flyway (V1__..., V2__...)
+│   └── test/java/com/moneyx/              ← espelha a estrutura de main
 ├── .gitignore
 ├── compose.yaml
-├── mvnw
-├── mvnw.cmd
+├── mvnw / mvnw.cmd
 └── pom.xml
 ```
 
-A estrutura poderá evoluir conforme os módulos forem definidos.
+### Organização dos módulos
+
+O código é organizado primeiro por módulo (*package by feature*) e depois por camada.
+Novos módulos (`payment`, `webhook`, etc.) devem seguir a mesma estrutura do `merchant`.
+
+Direção obrigatória das dependências:
+
+```text
+api  →  service  →  repository  →  domain
+           ↓
+       exception
+```
+
+- `domain` não importa nenhuma outra camada.
+- `repository` conhece apenas `domain`.
+- `service` orquestra `domain` e `repository` e lança as exceções do módulo.
+- `api` conhece apenas `service` e seus DTOs; nunca acessa o repositório diretamente.
+- Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
+
+### Migrations
+
+- Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
+- Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
+- Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
+
+### Testes
+
+| Tipo | Ferramenta | Exemplo |
+|---|---|---|
+| Unitário de domínio | JUnit 5 + AssertJ | `MerchantTest` |
+| Unitário de serviço | Mockito | `MerchantServiceTest` |
+| Integração de persistência | `@DataJpaTest` + PostgreSQL real | `MerchantRepositoryTest` |
+| Camada web | `@WebMvcTest` + MockMvc | `MerchantControllerTest` |
+
+Executar todos os testes (requer o container PostgreSQL ativo e `POSTGRES_PASSWORD` definido):
+
+```powershell
+.\mvnw.cmd test
+```
+
+Os testes de integração utilizam atualmente o banco de desenvolvimento, com rollback ao final de cada teste.
+Avaliar Testcontainers na Fase 6 para isolar o banco de testes.
 
 ## 7. Infraestrutura PostgreSQL
 
@@ -389,12 +437,16 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Documentar a skill do projeto.
 
 ### Fase 2 — Domínio e comerciantes
-- [ ] Criar entidade Merchant.
-- [ ] Criar repositório.
-- [ ] Criar serviço.
+
+- [x] Criar entidade Merchant.
+- [x] Adotar Flyway e criar migration `V1__create_merchants_table`.
+- [x] Criar repositório.
+- [x] Criar serviço.
+- [x] Organizar o módulo em camadas (`domain`, `repository`, `service`, `exception`).
 - [ ] Criar DTOs e validações.
 - [ ] Implementar endpoints.
-- [ ] Criar testes.
+- [ ] Implementar tratamento padronizado de erros.
+- [ ] Criar testes (domínio, serviço e repositório concluídos; faltam os da camada web).
 
 ### Fase 3 — Segurança
 
