@@ -269,6 +269,11 @@ api  →  service  →  repository  →  domain
 | Integração de persistência | `@DataJpaTest` + PostgreSQL real | `MerchantRepositoryTest` |
 | Camada web | `@WebMvcTest` + MockMvc + `@Import(SecurityConfig.class)` | `MerchantControllerTest` |
 | Segurança | `@WebMvcTest` + mocks dos serviços do filtro | `ApiKeyAuthenticationTest` |
+| Ponta a ponta | `@SpringBootTest` + `@AutoConfigureMockMvc`, tudo real (sem `@Transactional`, limpeza explícita) | `SecurityIsolationIntegrationTest` |
+| Concorrência | `@SpringBootTest` + threads com `CountDownLatch` | `ApiKeyConcurrencyIntegrationTest` |
+
+Todo recurso novo pertencente a um comerciante deve ganhar cenários no `SecurityIsolationIntegrationTest`
+(A não lê/altera recurso de B → 404 indistinguível de inexistente).
 
 Testes de controller autenticados usam `TestAuthentication.activeMerchant(merchantId)` (em `src/test/.../security`).
 
@@ -550,7 +555,9 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Spring Security com filtro de API Key.
 - [x] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
 - [x] Endpoints de gerenciamento de chaves (criar, listar, revogar).
-- [ ] Testes de autenticação, autorização e isolamento entre comerciantes.
+- [x] Testes de autenticação, autorização e isolamento entre comerciantes.
+
+**Fase 3 concluída em 2026-11-19.**
 
 ### Fase 4 — Pagamentos
 
