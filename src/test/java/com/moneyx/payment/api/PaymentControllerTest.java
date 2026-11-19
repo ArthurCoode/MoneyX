@@ -102,6 +102,8 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.description").value("Pedido 123"))
                 .andExpect(jsonPath("$.externalReference").value("order-123"))
                 .andExpect(jsonPath("$.expiresAt").value("2026-11-19T12:30:00Z"))
+                .andExpect(jsonPath("$.pix.txid").value(payment.getPixTxid()))
+                .andExpect(jsonPath("$.pix.copyPaste").value(payment.getPixCopyPaste()))
                 .andExpect(jsonPath("$.merchantId").doesNotExist())
                 .andExpect(jsonPath("$.version").doesNotExist());
     }

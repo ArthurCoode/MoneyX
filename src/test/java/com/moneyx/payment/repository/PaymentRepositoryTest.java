@@ -75,6 +75,8 @@ class PaymentRepositoryTest {
         assertThat(found.getExternalReference()).isEqualTo("order-123");
         assertThat(found.getExpiresAt()).isEqualTo(saved.getExpiresAt());
         assertThat(found.getCreatedAt()).isEqualTo(NOW);
+        assertThat(found.getPixTxid()).isEqualTo(saved.getPixTxid());
+        assertThat(found.getPixCopyPaste()).isEqualTo(saved.getPixCopyPaste());
     }
 
     @Test
@@ -147,5 +149,25 @@ class PaymentRepositoryTest {
         assertThatThrownBy(() -> jdbc.update("UPDATE payments SET currency = 'USD' WHERE id = ?", id))
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("ck_payments_currency");
+    }
+
+    @Test
+    void databaseRejectsDuplicateTxid() {
+        Payment first = savedPayment();
+        Payment second = savedPayment();
+
+        assertThatThrownBy(() -> jdbc.update("UPDATE payments SET pix_txid = ? WHERE id = ?",
+                first.getPixTxid(), second.getId()))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("uk_payments_pix_txid");
+    }
+
+    @Test
+    void databaseRejectsMalformedBrCode() {
+        UUID id = savedPayment().getId();
+
+        assertThatThrownBy(() -> jdbc.update("UPDATE payments SET pix_copy_paste = 'not a br code' WHERE id = ?", id))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("ck_payments_pix_copy_paste");
     }
 }

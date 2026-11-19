@@ -2,8 +2,12 @@ package com.moneyx.payment.service;
 
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentIdempotencyKey;
+import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
+import com.moneyx.payment.exception.PaymentExpiredException;
+import com.moneyx.payment.exception.PaymentNotFoundException;
+import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import org.springframework.stereotype.Service;
@@ -105,5 +109,38 @@ public class PaymentService {
                 .orElseThrow(() -> new IllegalStateException("Payment referenced by idempotency key not found"));
 
         return new PaymentCreation(original, true);
+    }
+
+    /**
+     * SANDBOX: simula o pagador pagando o Pix pelo app do banco.
+     *
+     * Em produção (Fase 7) quem confirma o pagamento é o PSP, nunca o comerciante. Por isso este
+     * caso de uso existe apenas para o endpoint de sandbox.
+     *
+     * A linha do pagamento é trancada antes de qualquer verificação: dois "pagar" simultâneos são
+     * serializados e o segundo recebe PaymentNotPendingException (status já PAID).
+     *
+     * @throws PaymentNotFoundException   pagamento inexistente ou de outro comerciante
+     * @throws PaymentNotPendingException pagamento já está em estado final
+     * @throws PaymentExpiredException    prazo de pagamento encerrado
+     */
+    @Transactional
+    public Payment simulatePixPayment(UUID merchantId, UUID paymentId) {
+        Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(PaymentNotFoundException::new);
+
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+
+        // Mensagens de erro específicas para o cliente. O próprio markPaid repete estas verificações
+        // (é a regra do domínio); aqui só as antecipamos para responder com o motivo exato.
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            throw new PaymentNotPendingException(payment.getStatus());
+        }
+        if (payment.isPastExpiration(now)) {
+            throw new PaymentExpiredException();
+        }
+
+        payment.markPaid(now);
+        return payment;
     }
 }

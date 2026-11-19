@@ -76,6 +76,14 @@ public class Payment {
     @Column(name = "expires_at", nullable = false, updatable = false)
     private Instant expiresAt;
 
+    /** Identificador da cobrança Pix (campo 62.05 do BR Code), usado na conciliação. */
+    @Column(name = "pix_txid", nullable = false, updatable = false, length = PixCharge.TXID_LENGTH)
+    private String pixTxid;
+
+    /** BR Code ("Pix copia e cola"). */
+    @Column(name = "pix_copy_paste", nullable = false, updatable = false, length = 512)
+    private String pixCopyPaste;
+
     @Column(name = "paid_at")
     private Instant paidAt;
 
@@ -133,6 +141,11 @@ public class Payment {
         payment.createdAt = now;
         payment.updatedAt = now;
         payment.expiresAt = now.plus(expiration);
+
+        // A cobrança Pix nasce junto com o pagamento e carrega o mesmo valor.
+        PixCharge pix = PixCharge.sandbox(amount);
+        payment.pixTxid = pix.txid();
+        payment.pixCopyPaste = pix.copyPaste();
         return payment;
     }
 
@@ -224,6 +237,14 @@ public class Payment {
 
     public Instant getExpiresAt() {
         return expiresAt;
+    }
+
+    public String getPixTxid() {
+        return pixTxid;
+    }
+
+    public String getPixCopyPaste() {
+        return pixCopyPaste;
     }
 
     public Instant getPaidAt() {
