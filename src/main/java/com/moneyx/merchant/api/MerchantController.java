@@ -5,11 +5,12 @@ import com.moneyx.merchant.api.dto.MerchantRegistrationResponse;
 import com.moneyx.merchant.api.dto.MerchantResponse;
 import com.moneyx.merchant.service.MerchantRegistration;
 import com.moneyx.merchant.service.MerchantService;
+import com.moneyx.security.AuthenticatedMerchant;
 import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,7 +18,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
-import java.util.UUID;
 
 /**
  * Endpoints HTTP do módulo de comerciantes.
@@ -43,10 +43,11 @@ public class MerchantController {
         MerchantRegistration registration =
                 service.register(request.legalName(), request.document(), request.email());
 
-        // 201 Created + header Location apontando para o novo recurso (convenção REST).
+        // 201 Created + header Location apontando para o recurso criado (convenção REST).
+        // O comerciante só é acessível por /me, autenticado com a chave devolvida nesta resposta.
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
-                .path("/{id}")
-                .buildAndExpand(registration.merchant().getId())
+                .path("/me")
+                .build()
                 .toUri();
 
         // A resposta contém um segredo: proíbe que navegadores, proxies ou CDNs a armazenem em cache.
@@ -55,8 +56,14 @@ public class MerchantController {
                 .body(MerchantRegistrationResponse.from(registration));
     }
 
-    @GetMapping("/{id}")
-    public MerchantResponse getById(@PathVariable UUID id) {
-        return MerchantResponse.from(service.getById(id));
+    /**
+     * Dados do próprio comerciante autenticado.
+     *
+     * O ID vem da API Key (via SecurityContext), nunca da URL: não existe forma de um
+     * comerciante pedir os dados de outro (proteção contra IDOR).
+     */
+    @GetMapping("/me")
+    public MerchantResponse me(@AuthenticationPrincipal AuthenticatedMerchant principal) {
+        return MerchantResponse.from(service.getById(principal.merchantId()));
     }
 }

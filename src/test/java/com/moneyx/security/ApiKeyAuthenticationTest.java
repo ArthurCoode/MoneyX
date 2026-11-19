@@ -38,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Testes do filtro de API Key + regras de autorização do SecurityConfig.
  *
- * Usa GET /v1/merchants/{id} como exemplo de rota protegida e POST /v1/merchants como rota pública.
+ * Usa GET /v1/merchants/me como exemplo de rota protegida e POST /v1/merchants como rota pública.
  * Os serviços são mocks: aqui testamos a decisão de segurança, não o banco.
  * (A busca por hash e o filtro de chaves revogadas são testados em ApiKeyServiceTest.)
  */
@@ -71,7 +71,7 @@ class ApiKeyAuthenticationTest {
     }
 
     private ResultActions getOwnMerchant(String authorizationHeader) throws Exception {
-        var request = get("/v1/merchants/{id}", merchant.getId());
+        var request = get("/v1/merchants/me");
         if (authorizationHeader != null) {
             request.header(HttpHeaders.AUTHORIZATION, authorizationHeader);
         }

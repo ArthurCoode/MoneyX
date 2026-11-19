@@ -78,7 +78,7 @@ class MerchantControllerTest {
                                 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(header().string("Location", endsWith("/v1/merchants/" + merchant.getId())))
+                .andExpect(header().string("Location", endsWith("/v1/merchants/me")))
                 .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.merchant.id").value(merchant.getId().toString()))
                 .andExpect(jsonPath("$.merchant.document").value("12345678000190"))
@@ -160,32 +160,50 @@ class MerchantControllerTest {
     }
 
     @Test
-    void getByIdReturns404WhenMerchantDoesNotExist() throws Exception {
-        UUID id = UUID.randomUUID();
-        when(service.getById(id)).thenThrow(new MerchantNotFoundException(id));
-
-        mockMvc.perform(get("/v1/merchants/{id}", id).with(activeMerchant(UUID.randomUUID())))
-                .andExpect(status().isNotFound())
-                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.detail").value("Merchant not found: " + id));
-    }
-
-    @Test
-    void getByIdReturnsMerchant() throws Exception {
+    void meReturnsTheAuthenticatedMerchant() throws Exception {
         Merchant merchant = new Merchant("Loja LTDA", "12345678901", "contato@loja.com");
         when(service.getById(merchant.getId())).thenReturn(merchant);
 
-        mockMvc.perform(get("/v1/merchants/{id}", merchant.getId()).with(activeMerchant(merchant.getId())))
+        mockMvc.perform(get("/v1/merchants/me").with(activeMerchant(merchant.getId())))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(merchant.getId().toString()))
                 .andExpect(jsonPath("$.legalName").value("Loja LTDA"))
-                .andExpect(jsonPath("$.email").value("contato@loja.com"));
+                .andExpect(jsonPath("$.email").value("contato@loja.com"))
+                .andExpect(jsonPath("$.version").doesNotExist());
     }
 
     @Test
-    void getByIdReturns400WhenIdIsNotUuid() throws Exception {
-        mockMvc.perform(get("/v1/merchants/{id}", "abc").with(activeMerchant(UUID.randomUUID())))
-                .andExpect(status().isBadRequest())
+    void meReturns404WhenAuthenticatedMerchantNoLongerExists() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.getById(id)).thenThrow(new MerchantNotFoundException(id));
+
+        mockMvc.perform(get("/v1/merchants/me").with(activeMerchant(id)))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void meRequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/v1/merchants/me"))
+                .andExpect(status().isUnauthorized())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+
+        verify(service, never()).getById(any());
+    }
+
+    /**
+     * Regressão de IDOR: a antiga rota GET /v1/merchants/{id} não existe mais.
+     * Mesmo autenticado, um comerciante não consegue ler outro informando o ID na URL.
+     */
+    @Test
+    void merchantCannotBeReadByIdInTheUrl() throws Exception {
+        UUID otherMerchantId = UUID.randomUUID();
+
+        mockMvc.perform(get("/v1/merchants/{id}", otherMerchantId).with(activeMerchant(UUID.randomUUID())))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+
+        verify(service, never()).getById(any());
     }
 }
