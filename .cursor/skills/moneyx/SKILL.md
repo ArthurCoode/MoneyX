@@ -245,6 +245,11 @@ api  →  service  →  repository  →  domain
 - A última chave ativa não pode ser revogada → 409 `last_active_api_key`.
 - Revogar a própria chave usada na requisição é permitido (se não for a última); ela deixa de valer imediatamente.
 
+### JSON
+
+- `spring.jackson.deserialization.accept-float-as-int=false`: sem isso o Jackson TRUNCA decimais em campos
+  inteiros (`"amount": 4990.5` virava 4990). Nunca remover; coberto por `PaymentControllerTest`.
+
 ### Erros da API
 
 - Todas as respostas de erro seguem o padrão Problem Details (RFC 9457), `Content-Type: application/problem+json`.
@@ -573,14 +578,32 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - Moeda: apenas `BRL` (enum `PaymentCurrency`), campo modelado desde já.
 - Limites de negócio ficam no domínio (podem mudar sem migration); o banco garante só invariantes
   (amount > 0, status/moeda válidos, `paid_at` ⇔ PAID, `canceled_at` ⇔ CANCELED).
-- Métodos de domínio recebem `Instant now` (testabilidade); o serviço usará um `Clock`.
+- Métodos de domínio recebem `Instant now` (testabilidade); os serviços usam o bean `Clock` (`shared/config/ClockConfig`, UTC).
+  Instantes são truncados para microssegundos (precisão do PostgreSQL) antes de usar.
+
+#### Idempotência de `POST /v1/payments` (definida em 2026-11-19)
+
+- Header `Idempotency-Key` **obrigatório** (ausente → 400); 1 a 255 caracteres ASCII visíveis (senão 400 `invalid_idempotency_key`).
+- Escopo por comerciante: UNIQUE (merchant_id, idempotency_key) em `payment_idempotency_keys` (V4). Validade de **24 h**.
+- Mesma chave + mesmo corpo → 201 com o pagamento original e `Idempotent-Replayed: true` (sem criar outro).
+- Mesma chave + corpo diferente → **422** `idempotency_key_reused`. Corpo comparado por SHA-256 dos campos
+  codificados com prefixo de tamanho (`CreatePaymentCommand.fingerprint`).
+- Implementação: um único `INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at <= now` reserva a chave
+  na MESMA transação do pagamento. Requisições simultâneas com a mesma chave ESPERAM a primeira (lock do índice
+  UNIQUE) e recebem o replay; por isso não há estado "em processamento" nem 409.
+  FK `payment_id` é `DEFERRABLE INITIALLY DEFERRED` (a chave é gravada antes do pagamento).
+- Só sucessos consomem a chave: erro de validação ou falha fazem rollback e o cliente pode repetir com a mesma chave.
+- Replay devolve o estado ATUAL do pagamento (não a resposta original byte a byte, como o Stripe).
+- **Reavaliar na Fase 7:** com provedor Pix real (chamada externa fora da transação) será preciso estado
+  `IN_PROGRESS`, 409 e recuperação (padrão de "recovery points" do Stripe).
+- Comprovado por mutação: sem o `WHERE` de expiração ou sem a checagem do fingerprint, os testes falham.
 
 #### Etapas
 
 - [x] Definir modelo de Payment (`V3__create_payments_table`).
 - [x] Definir estados.
-- [ ] Implementar criação de pagamentos.
-- [ ] Implementar idempotência.
+- [x] Implementar criação de pagamentos (`POST /v1/payments`).
+- [x] Implementar idempotência.
 - [ ] Simular Pix.
 - [ ] Implementar consulta.
 - [ ] Implementar cancelamento.
