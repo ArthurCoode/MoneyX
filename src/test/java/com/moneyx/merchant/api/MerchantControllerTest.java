@@ -1,8 +1,13 @@
 package com.moneyx.merchant.api;
 
+import com.moneyx.apikey.domain.ApiKey;
+import com.moneyx.apikey.domain.ApiKeyGenerator;
+import com.moneyx.apikey.domain.ApiKeyGenerator.GeneratedApiKey;
+import com.moneyx.apikey.service.IssuedApiKey;
 import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.exception.DuplicateMerchantException;
 import com.moneyx.merchant.exception.MerchantNotFoundException;
+import com.moneyx.merchant.service.MerchantRegistration;
 import com.moneyx.merchant.service.MerchantService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,9 +49,12 @@ class MerchantControllerTest {
     private MerchantService service;
 
     @Test
-    void createReturns201WithLocationAndBody() throws Exception {
+    void createReturns201WithMerchantAndApiKey() throws Exception {
         Merchant merchant = new Merchant("Loja LTDA", "12345678000190", "contato@loja.com");
-        when(service.register("Loja LTDA", "12.345.678/0001-90", "contato@loja.com")).thenReturn(merchant);
+        GeneratedApiKey generated = ApiKeyGenerator.generate();
+        IssuedApiKey issued = new IssuedApiKey(ApiKey.issue(merchant.getId(), generated), generated.plainText());
+        when(service.register("Loja LTDA", "12.345.678/0001-90", "contato@loja.com"))
+                .thenReturn(new MerchantRegistration(merchant, issued));
 
         mockMvc.perform(post("/v1/merchants")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -59,10 +67,15 @@ class MerchantControllerTest {
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", endsWith("/v1/merchants/" + merchant.getId())))
-                .andExpect(jsonPath("$.id").value(merchant.getId().toString()))
-                .andExpect(jsonPath("$.document").value("12345678000190"))
-                .andExpect(jsonPath("$.status").value("ACTIVE"))
-                .andExpect(jsonPath("$.version").doesNotExist());
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.merchant.id").value(merchant.getId().toString()))
+                .andExpect(jsonPath("$.merchant.document").value("12345678000190"))
+                .andExpect(jsonPath("$.merchant.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.merchant.version").doesNotExist())
+                .andExpect(jsonPath("$.apiKey.id").value(issued.apiKey().getId().toString()))
+                .andExpect(jsonPath("$.apiKey.key").value(generated.plainText()))
+                .andExpect(jsonPath("$.apiKey.prefix").value(generated.displayPrefix()))
+                .andExpect(jsonPath("$.apiKey.keyHash").doesNotExist());
     }
 
     @Test

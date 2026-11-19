@@ -1,10 +1,12 @@
 package com.moneyx.merchant.api;
 
 import com.moneyx.merchant.api.dto.CreateMerchantRequest;
+import com.moneyx.merchant.api.dto.MerchantRegistrationResponse;
 import com.moneyx.merchant.api.dto.MerchantResponse;
-import com.moneyx.merchant.domain.Merchant;
+import com.moneyx.merchant.service.MerchantRegistration;
 import com.moneyx.merchant.service.MerchantService;
 import jakarta.validation.Valid;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,16 +39,20 @@ public class MerchantController {
     }
 
     @PostMapping
-    public ResponseEntity<MerchantResponse> create(@Valid @RequestBody CreateMerchantRequest request) {
-        Merchant merchant = service.register(request.legalName(), request.document(), request.email());
+    public ResponseEntity<MerchantRegistrationResponse> create(@Valid @RequestBody CreateMerchantRequest request) {
+        MerchantRegistration registration =
+                service.register(request.legalName(), request.document(), request.email());
 
         // 201 Created + header Location apontando para o novo recurso (convenção REST).
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
-                .buildAndExpand(merchant.getId())
+                .buildAndExpand(registration.merchant().getId())
                 .toUri();
 
-        return ResponseEntity.created(location).body(MerchantResponse.from(merchant));
+        // A resposta contém um segredo: proíbe que navegadores, proxies ou CDNs a armazenem em cache.
+        return ResponseEntity.created(location)
+                .cacheControl(CacheControl.noStore())
+                .body(MerchantRegistrationResponse.from(registration));
     }
 
     @GetMapping("/{id}")
