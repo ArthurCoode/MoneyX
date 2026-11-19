@@ -222,6 +222,28 @@ api  →  service  →  repository  →  domain
   (proteção contra IDOR). Ex.: `GET /v1/merchants/me`. Não criar rotas que recebam o `merchantId` do cliente.
 - Endpoints atuais de comerciante: `POST /v1/merchants` (público, `Location: /v1/merchants/me`) e `GET /v1/merchants/me`.
 
+### Convenções da API (padrão de gateways: Stripe, Mercado Pago)
+
+- Listas são devolvidas em envelope `{"data": [...]}`, nunca como array solto (permite paginação futura).
+- Erros de regra de negócio (409) incluem a propriedade `code` (snake_case, estável, para máquinas).
+  Atuais: `api_key_limit_reached`, `last_active_api_key`. O `detail` é para humanos e pode mudar.
+- `DELETE` é idempotente: repetir a operação já concluída responde `204`.
+- Recurso de outro comerciante → `404` com a mesma mensagem de recurso inexistente.
+  Buscar sempre por `id` E `merchantId` na mesma consulta (ex.: `findByIdAndMerchantId`).
+- Rota inexistente → 404 com mensagem genérica ("The requested resource was not found").
+- Regras que dependem de contagem ("no máximo N", "não remover o último") usam lock pessimista
+  (`SELECT ... FOR UPDATE`) sobre as linhas do comerciante, ANTES de contar ou ler o estado.
+  Provado por `ApiKeyConcurrencyIntegrationTest` (falha sem o lock).
+
+### API Keys: endpoints e regras
+
+- `POST /v1/api-keys` → 201, segredo apenas nesta resposta, `Cache-Control: no-store`.
+- `GET /v1/api-keys` → `{"data": [{id, prefix, active, createdAt, revokedAt}]}`, sem segredo nem hash.
+- `DELETE /v1/api-keys/{id}` → 204 (idempotente); 404 se não existir ou for de outro comerciante.
+- Máximo de **5** chaves ativas por comerciante (`ApiKeyService.MAX_ACTIVE_KEYS_PER_MERCHANT`) → 409 `api_key_limit_reached`.
+- A última chave ativa não pode ser revogada → 409 `last_active_api_key`.
+- Revogar a própria chave usada na requisição é permitido (se não for a última); ela deixa de valer imediatamente.
+
 ### Erros da API
 
 - Todas as respostas de erro seguem o padrão Problem Details (RFC 9457), `Content-Type: application/problem+json`.
@@ -527,7 +549,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Cadastro retorna a primeira chave.
 - [x] Spring Security com filtro de API Key.
 - [x] `GET /v1/merchants/me` e remoção de `GET /v1/merchants/{id}`.
-- [ ] Endpoints de gerenciamento de chaves (criar, listar, revogar).
+- [x] Endpoints de gerenciamento de chaves (criar, listar, revogar).
 - [ ] Testes de autenticação, autorização e isolamento entre comerciantes.
 
 ### Fase 4 — Pagamentos
