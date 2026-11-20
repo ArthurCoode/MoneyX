@@ -91,7 +91,9 @@ public class PaymentMaintenanceService {
             batch = transaction.execute(status ->
                     idempotencyKeyRepository.deleteExpired(now, IDEMPOTENCY_PURGE_BATCH_SIZE));
             total += batch;
-        } while (batch == IDEMPOTENCY_PURGE_BATCH_SIZE);
+            // Repete enquanto apagar algo: com SKIP LOCKED, um lote menor que o limite NÃO significa que acabou
+            // (algumas linhas podiam só estar trancadas naquele instante). Termina quando um lote vem vazio.
+        } while (batch > 0);
         return total;
     }
 }
