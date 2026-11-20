@@ -167,9 +167,12 @@ MoneyX/
 │   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
 │   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas + job/ para agendamentos)
 │   │   │   ├── event/                     ← módulo de eventos (histórico + Outbox), genérico
+│   │   │   ├── webhook/                   ← endpoints de webhook + linha do tempo (auditoria)
 │   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
-│   │   │       └── api/                   ← GlobalExceptionHandler (Problem Details)
+│   │   │       ├── api/                   ← GlobalExceptionHandler (Problem Details)
+│   │   │       ├── config/                ← ClockConfig
+│   │   │       └── crypto/                ← SecretCipher (AES-256-GCM) e CryptoConfig
 │   │   └── resources/
 │   │       ├── application.properties
 │   │       └── db/migration/              ← migrations Flyway (V1__..., V2__...)
@@ -203,7 +206,7 @@ api  →  service  →  repository  →  domain
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
 - Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
-  `security → merchant, apikey` e `payment → event`. `payment` referencia o comerciante por `merchantId`.
+  `security → merchant, apikey`, `payment → event` e `webhook → event`. `payment` referencia o comerciante por `merchantId`.
   `event` não importa nenhum módulo de negócio: recebe tipo, recurso e retrato prontos. Nenhum módulo de negócio importa `security`, exceto a camada `api`
   para ler o `AuthenticatedMerchant` (via `@AuthenticationPrincipal`).
   `apikey` nunca importa `merchant`; referencia o comerciante apenas por `merchantId` (UUID).
@@ -234,7 +237,8 @@ api  →  service  →  repository  →  domain
 - Listas paginadas usam cursor: `?limit=&startingAfter=<id>` e resposta `{"data": [...], "hasMore": bool}`.
 - Erros de regra de negócio incluem a propriedade `code` (snake_case, estável, para máquinas).
   Atuais: `api_key_limit_reached`, `last_active_api_key`, `invalid_idempotency_key`, `idempotency_key_reused`,
-  `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`. O `detail` é para humanos e pode mudar.
+  `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`,
+  `webhook_endpoint_limit_reached`, `invalid_webhook_url`. O `detail` é para humanos e pode mudar.
 - Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
   quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
@@ -274,7 +278,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V7. A próxima é `V8__...`.
+- Aplicadas: V1 a V8. A próxima é `V9__...`.
 
 ### Testes
 
@@ -288,7 +292,8 @@ api  →  service  →  repository  →  domain
 | Ponta a ponta | `@SpringBootTest` + `@AutoConfigureMockMvc`, tudo real (sem `@Transactional`, limpeza explícita) | `SecurityIsolationIntegrationTest` |
 | Concorrência | `@SpringBootTest` + threads com `CountDownLatch` | `ApiKeyConcurrencyIntegrationTest` |
 
-Limpeza em testes não transacionais, na ordem das FKs: `events` → `payment_idempotency_keys` → `payments` → `api_keys` → `merchants`.
+Limpeza em testes não transacionais, na ordem das FKs: `webhook_endpoint_history` → `webhook_endpoints` → `events` →
+`payment_idempotency_keys` → `payments` → `api_keys` → `merchants`.
 
 Todo recurso novo pertencente a um comerciante deve ganhar cenários no `SecurityIsolationIntegrationTest`
 (A não lê/altera recurso de B → 404 indistinguível de inexistente).
@@ -385,13 +390,18 @@ spring.jpa.hibernate.ddl-auto=validate
 spring.jpa.open-in-view=false
 ```
 
-A variável `POSTGRES_PASSWORD` é disponibilizada na sessão do PowerShell a partir do `.env`:
+As variáveis `POSTGRES_PASSWORD` e `MONEYX_WEBHOOK_ENCRYPTION_KEY` são disponibilizadas na sessão do PowerShell a
+partir do `.env` (sem imprimir os valores):
 
 ```powershell
-$env:POSTGRES_PASSWORD = ((Get-Content .env | Where-Object { $_ -match '^POSTGRES_PASSWORD=' }) -split '=', 2)[1]
+foreach ($n in "POSTGRES_PASSWORD", "MONEYX_WEBHOOK_ENCRYPTION_KEY") {
+    Set-Item -Path "Env:$n" -Value ((Get-Content .env | Where-Object { $_ -match "^$n=" }) -split '=', 2)[1]
+}
 ```
 
-A variável precisa estar definida na sessão em que a aplicação for iniciada.
+As duas precisam estar definidas na sessão em que a aplicação for iniciada. **Sem `MONEYX_WEBHOOK_ENCRYPTION_KEY` a
+aplicação não sobe** (de propósito). Os testes usam uma chave fixa de teste (`src/test/resources/config/application.properties`)
+e só precisam de `POSTGRES_PASSWORD`.
 
 ### Executar aplicação
 
@@ -658,6 +668,11 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   próxima execução. Duas instâncias da aplicação dividem o trabalho sem repetir (testado).
 - Índices da V6: parcial `payments (expires_at) WHERE status = 'PENDING'` e `payment_idempotency_keys (expires_at)`
   (uso confirmado com `EXPLAIN`).
+- Limpeza das chaves: `WITH batch AS MATERIALIZED (SELECT ... LIMIT ... FOR UPDATE SKIP LOCKED) DELETE ... USING batch`
+  e o laço repete **enquanto o lote apagar algo** (`batch > 0`). Corrigido em 2026-11-20: a versão com
+  `DELETE ... WHERE id IN (subconsulta com LIMIT + SKIP LOCKED)` e laço `while (batch == limite)` apagou menos linhas
+  que o esperado numa execução da suíte completa (falha intermitente, causa exata não reproduzida isoladamente).
+  Com SKIP LOCKED, um lote curto NÃO significa que acabou.
 - **Limitação conhecida:** se o domínio recusar um pagamento do lote (`expire()` lança exceção), o lote inteiro é desfeito
   e o job falha nesse ponto a cada execução. Hoje a consulta e o domínio usam exatamente a mesma regra; se divergirem no
   futuro, avaliar isolar por linha e registrar a falha.
@@ -687,7 +702,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 - [x] Modelar eventos.
 - [x] Avaliar padrão Outbox (adotado: tabela `events` gravada na transação da mudança de estado).
-- [ ] Cadastro de endpoints de webhook.
+- [x] Cadastro de endpoints de webhook (com linha do tempo de auditoria).
 - [ ] Implementar webhooks (entrega a partir do Outbox).
 - [ ] Implementar assinatura.
 - [ ] Implementar tentativas e retentativas.
@@ -711,6 +726,35 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   (mesmo conteúdo; JSON não garante ordem).
 - O comerciante deve deduplicar pelo `id` do evento: a entrega por webhook será "pelo menos uma vez".
 - Retenção: eventos não são apagados por enquanto (Stripe guarda 30 dias); avaliar na Fase 6.
+
+#### Endpoints de webhook (definido em 2026-11-20)
+
+- Módulo `webhook` (depende só de `event`, pelo catálogo de tipos). V8: `webhook_endpoints` (ESTADO ATUAL) e
+  `webhook_endpoint_history` (LINHA DO TEMPO / trilha de auditoria, só INSERT).
+- **Estado atual + linha do tempo (abordagem escolhida pelo desenvolvedor):** cada mudança grava, na MESMA transação,
+  `{action, apiKeyId (quem fez), occurredAt, snapshot (url + enabledEvents, NUNCA o segredo)}`. Não é Event Sourcing
+  completo: o estado continua na tabela principal; a linha do tempo é complementar. Novas ações (edição, rotação,
+  desativação por falhas) entram como novos valores de `WebhookEndpointAction` (e do CHECK).
+- Endpoints: `POST /v1/webhook-endpoints` (201, segredo `whsec_...` só nesta resposta, `no-store`), `GET` (ativos, `{data}`),
+  `GET /{id}` (inclusive removidos, com `deletedAt`), `DELETE /{id}` (lógico, idempotente: 204 sempre; repetir não grava
+  histórico), `GET /{id}/history` (do mais antigo ao mais recente; disponível após a remoção).
+- Até **5** endpoints ativos por comerciante → 409 `webhook_endpoint_limit_reached`. O lock é na **linha do comerciante**
+  (`WebhookEndpointRepository.lockMerchant`, `SELECT ... FROM merchants ... FOR UPDATE`), não nos endpoints: com zero
+  endpoints não haveria linha para trancar (provado: sem esse lock, 8 cadastros simultâneos partindo de zero furavam o
+  limite). Regra geral: **para limites que começam em zero, trancar a linha "pai"**.
+- `enabledEvents`: opcional (padrão todos); vazio, nulo ou tipo desconhecido → 400; sem repetição, na ordem do catálogo.
+  Banco: `VARCHAR(50)[]` com CHECK `cardinality >= 1 AND enabled_events <@ ARRAY[...]`.
+- **Segredo de assinatura cifrado** (`shared/crypto/SecretCipher`, AES-256-GCM do JDK, nonce aleatório de 12 bytes, tag de
+  128 bits). Chave em `MONEYX_WEBHOOK_ENCRYPTION_KEY` (.env). **AAD = id do endpoint**: texto cifrado copiado para outro
+  endpoint não decifra. Diferente da API Key (hash), porque o MoneyX precisa LER o segredo para assinar.
+  `WebhookEndpointService.signingSecretOf` é de uso interno (entrega); nunca devolver pela API. Só o prefixo (`whsec_ab12`)
+  aparece depois do cadastro. Rotação da chave de cifragem: Fase 6.
+- **SSRF:** `WebhookUrlValidator` (cadastro, sem DNS): URL absoluta, `https`, até 2048 caracteres, sem credenciais e sem
+  fragmento; rejeita `localhost`/`*.localhost`, IPs internos escritos na URL (loopback, privados, link-local incl.
+  169.254.169.254, CGNAT 100.64/10, 0/8, 240/4, multicast, IPv6 ULA fc00::/7, `::ffff:127.0.0.1`) e formas numéricas
+  alternativas (`2130706433`, `0177.0.0.1`). `moneyx.webhooks.allow-local-urls` (padrão **false**) libera só
+  `http(s)://localhost`/loopback para testes locais. **A checagem definitiva é na ENTREGA** (`isInternalAddress` sobre o
+  IP resolvido em cada envio), por causa de DNS rebinding.
 
 ### Fase 6 — Qualidade e documentação
 
