@@ -1,5 +1,8 @@
 package com.moneyx.payment.api;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
 import com.moneyx.payment.service.PaymentView;
 import com.moneyx.payment.service.PaymentService;
 import com.moneyx.security.AuthenticatedMerchant;
@@ -17,6 +20,7 @@ import java.util.UUID;
  * Hoje todas as chaves são de teste (mx_test_). Na Fase 7, quando existirem chaves mx_live_,
  * estas rotas devem ser bloqueadas para elas (o pagamento real é confirmado pelo PSP).
  */
+@Tag(name = "Sandbox")
 @RestController
 @RequestMapping("/v1/sandbox/payments")
 public class PaymentSandboxController {
@@ -28,6 +32,11 @@ public class PaymentSandboxController {
     }
 
     /** Simula o pagador pagando o Pix. 200 com o pagamento já PAID. */
+    @Operation(operationId = "simulatePixPayment", summary = "Simular o pagamento do Pix",
+            description = "SANDBOX: simula o pagador pagando o Pix. Em produção quem confirma é o PSP.")
+    @ApiResponse(responseCode = "200", description = "Pagamento PAID.")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping("/{id}/pay")
     public PaymentView pay(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return PaymentView.from(service.simulatePixPayment(principal.merchantId(), id));

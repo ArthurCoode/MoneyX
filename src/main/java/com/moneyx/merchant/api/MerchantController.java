@@ -1,5 +1,8 @@
 package com.moneyx.merchant.api;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
 import com.moneyx.merchant.api.dto.CreateMerchantRequest;
 import com.moneyx.merchant.api.dto.MerchantRegistrationResponse;
 import com.moneyx.merchant.api.dto.MerchantResponse;
@@ -28,6 +31,7 @@ import java.net.URI;
  * Prefixo /v1: versionar a API desde o início permite mudanças incompatíveis
  * no futuro (/v2) sem quebrar integrações existentes.
  */
+@Tag(name = "Merchants")
 @RestController
 @RequestMapping("/v1/merchants")
 public class MerchantController {
@@ -38,6 +42,11 @@ public class MerchantController {
         this.service = service;
     }
 
+    @Operation(operationId = "createMerchant", summary = "Cadastrar comerciante (público)",
+            description = "Auto-cadastro. A resposta traz a primeira API Key **uma única vez** (`Cache-Control: no-store`). Limitado a 5 tentativas por IP (+1 a cada 2 min).")
+    @ApiResponse(responseCode = "201", description = "Comerciante criado, com a primeira API Key.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping
     public ResponseEntity<MerchantRegistrationResponse> create(@Valid @RequestBody CreateMerchantRequest request) {
         MerchantRegistration registration =
@@ -62,6 +71,9 @@ public class MerchantController {
      * O ID vem da API Key (via SecurityContext), nunca da URL: não existe forma de um
      * comerciante pedir os dados de outro (proteção contra IDOR).
      */
+    @Operation(operationId = "getCurrentMerchant", summary = "Consultar o próprio comerciante",
+            description = "O comerciante é identificado pela API Key, nunca pela URL.")
+    @ApiResponse(responseCode = "200", description = "Comerciante da API Key usada.")
     @GetMapping("/me")
     public MerchantResponse me(@AuthenticationPrincipal AuthenticatedMerchant principal) {
         return MerchantResponse.from(service.getById(principal.merchantId()));

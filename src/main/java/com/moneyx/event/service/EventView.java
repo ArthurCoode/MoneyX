@@ -15,7 +15,7 @@ import java.util.UUID;
  * data já está gravado em JSON; @JsonRawValue o escreve como está (um objeto), em vez de uma string com aspas.
  * O comerciante deve usar o "id" para descartar eventos repetidos (a entrega será "pelo menos uma vez").
  */
-public record EventView(UUID id, String type, Instant createdAt, @JsonRawValue String data) {
+public record EventView(UUID id, String type, Instant createdAt, @io.swagger.v3.oas.annotations.media.Schema(types = {"object"}, description = "Retrato do recurso no momento do evento (objeto JSON).") @JsonRawValue String data) {
 
     public static EventView from(Event event) {
         return new EventView(event.getId(), event.getType().value(), event.getCreatedAt(), event.getData());

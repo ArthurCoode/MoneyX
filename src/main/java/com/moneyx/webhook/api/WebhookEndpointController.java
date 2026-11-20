@@ -1,5 +1,8 @@
 package com.moneyx.webhook.api;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
 import com.moneyx.security.AuthenticatedMerchant;
 import com.moneyx.webhook.api.dto.CreateWebhookEndpointRequest;
 import com.moneyx.webhook.api.dto.CreatedWebhookEndpointResponse;
@@ -30,6 +33,7 @@ import java.net.URI;
 import java.util.Locale;
 import java.util.UUID;
 
+@Tag(name = "Webhook Endpoints")
 @RestController
 @RequestMapping("/v1/webhook-endpoints")
 public class WebhookEndpointController {
@@ -43,6 +47,11 @@ public class WebhookEndpointController {
     }
 
     /** 201 com o segredo de assinatura (única vez), Cache-Control: no-store. */
+    @Operation(operationId = "createWebhookEndpoint", summary = "Cadastrar endpoint de webhook",
+            description = "Somente `https`, sem destinos internos. O segredo de assinatura (`whsec_...`) aparece **somente** nesta resposta. Máximo de 5 endpoints.")
+    @ApiResponse(responseCode = "201", description = "Endpoint criado.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping
     public ResponseEntity<CreatedWebhookEndpointResponse> create(
             @AuthenticationPrincipal AuthenticatedMerchant principal,
@@ -60,18 +69,29 @@ public class WebhookEndpointController {
     }
 
     /** Endpoints ATIVOS. */
+    @Operation(operationId = "listWebhookEndpoints", summary = "Listar endpoints",
+            description = "Endpoints não removidos (inclusive desativados).")
+    @ApiResponse(responseCode = "200", description = "Endpoints.")
     @GetMapping
     public WebhookEndpointListResponse list(@AuthenticationPrincipal AuthenticatedMerchant principal) {
         return new WebhookEndpointListResponse(
                 service.listActive(principal.merchantId()).stream().map(WebhookEndpointResponse::from).toList());
     }
 
+    @Operation(operationId = "getWebhookEndpoint", summary = "Consultar endpoint",
+            description = "Inclusive removidos (`deletedAt`) e desativados (`disabledAt`).")
+    @ApiResponse(responseCode = "200", description = "Endpoint.")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @GetMapping("/{id}")
     public WebhookEndpointResponse get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return WebhookEndpointResponse.from(service.get(principal.merchantId(), id));
     }
 
     /** Remoção lógica e idempotente: 204 também na repetição. */
+    @Operation(operationId = "deleteWebhookEndpoint", summary = "Remover endpoint",
+            description = "Remoção lógica e idempotente. A linha do tempo continua disponível.")
+    @ApiResponse(responseCode = "204", description = "Removido (ou já estava).")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         service.delete(principal.merchantId(), principal.apiKeyId(), id);
@@ -79,12 +99,22 @@ public class WebhookEndpointController {
     }
 
     /** Reativa um endpoint desativado por falhas. Idempotente. 409 se o endpoint foi removido. */
+    @Operation(operationId = "enableWebhookEndpoint", summary = "Reativar endpoint",
+            description = "Reativa um endpoint desativado por falhas. Idempotente.")
+    @ApiResponse(responseCode = "200", description = "Endpoint ativo.")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping("/{id}/enable")
     public WebhookEndpointResponse enable(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return WebhookEndpointResponse.from(service.enable(principal.merchantId(), principal.apiKeyId(), id));
     }
 
     /** Entregas do endpoint, mais recentes primeiro: ?limit=10&startingAfter=<id>&status=failed */
+    @Operation(operationId = "listWebhookDeliveries", summary = "Listar entregas do endpoint",
+            description = "Tentativas, último erro, status HTTP e próxima tentativa. Paginação por cursor, filtro `status`.")
+    @ApiResponse(responseCode = "200", description = "Página de entregas.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @GetMapping("/{id}/deliveries")
     public WebhookDeliveryListResponse deliveries(@AuthenticationPrincipal AuthenticatedMerchant principal,
                                                   @PathVariable UUID id,
@@ -105,6 +135,10 @@ public class WebhookEndpointController {
     }
 
     /** Linha do tempo do endpoint (também de endpoints já removidos). */
+    @Operation(operationId = "getWebhookEndpointHistory", summary = "Linha do tempo do endpoint",
+            description = "O que aconteceu com o endpoint, quando e com qual API Key (`null` = ação automática do sistema).")
+    @ApiResponse(responseCode = "200", description = "Linha do tempo, do mais antigo ao mais recente.")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @GetMapping("/{id}/history")
     public WebhookEndpointHistoryResponse history(@AuthenticationPrincipal AuthenticatedMerchant principal,
                                                   @PathVariable UUID id) {

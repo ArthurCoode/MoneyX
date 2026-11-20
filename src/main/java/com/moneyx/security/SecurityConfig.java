@@ -87,6 +87,10 @@ public class SecurityConfig {
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/merchants").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
+                        // Documentação da API (contrato OpenAPI + Swagger UI): pública, como a do Stripe. Não contém
+                        // segredos. Desligável com springdoc.api-docs.enabled=false / springdoc.swagger-ui.enabled=false.
+                        .requestMatchers(HttpMethod.GET, "/v3/api-docs", "/v3/api-docs/**",
+                                "/swagger-ui.html", "/swagger-ui/**").permitAll()
                         // Todo o resto exige comerciante autenticado E ativo.
                         // Sem autenticação -> 401 (entry point). Autenticado sem a autoridade -> 403.
                         .anyRequest().hasAuthority(ACTIVE_MERCHANT))

@@ -18,7 +18,8 @@ public record WebhookEndpointHistoryResponse(List<Entry> data) {
         return new WebhookEndpointHistoryResponse(entries.stream().map(Entry::from).toList());
     }
 
-    public record Entry(UUID id, String action, UUID apiKeyId, Instant occurredAt, @JsonRawValue String snapshot) {
+    @io.swagger.v3.oas.annotations.media.Schema(name = "WebhookEndpointHistoryEntry")
+    public record Entry(UUID id, String action, UUID apiKeyId, Instant occurredAt, @io.swagger.v3.oas.annotations.media.Schema(types = {"object"}, description = "url e enabledEvents naquele momento (nunca o segredo).") @JsonRawValue String snapshot) {
 
         static Entry from(WebhookEndpointHistory entry) {
             return new Entry(entry.getId(), entry.getAction().name().toLowerCase(Locale.ROOT),

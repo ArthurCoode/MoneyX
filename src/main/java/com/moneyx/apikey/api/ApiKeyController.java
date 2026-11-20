@@ -1,5 +1,8 @@
 package com.moneyx.apikey.api;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
 import com.moneyx.apikey.api.dto.ApiKeyListResponse;
 import com.moneyx.apikey.api.dto.ApiKeyResponse;
 import com.moneyx.apikey.api.dto.CreatedApiKeyResponse;
@@ -25,6 +28,7 @@ import java.util.UUID;
  * Todas as operações usam o merchantId do AuthenticatedMerchant (vindo da chave usada
  * na requisição), nunca um id informado pelo cliente.
  */
+@Tag(name = "API Keys")
 @RestController
 @RequestMapping("/v1/api-keys")
 public class ApiKeyController {
@@ -36,6 +40,10 @@ public class ApiKeyController {
     }
 
     /** Cria uma nova chave. O segredo aparece SOMENTE nesta resposta. */
+    @Operation(operationId = "createApiKey", summary = "Criar API Key",
+            description = "O segredo aparece **somente** nesta resposta. Máximo de 5 chaves ativas.")
+    @ApiResponse(responseCode = "201", description = "Chave criada.")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping
     public ResponseEntity<CreatedApiKeyResponse> create(@AuthenticationPrincipal AuthenticatedMerchant principal) {
         CreatedApiKeyResponse body = CreatedApiKeyResponse.from(service.issueFor(principal.merchantId()));
@@ -45,6 +53,9 @@ public class ApiKeyController {
                 .body(body);
     }
 
+    @Operation(operationId = "listApiKeys", summary = "Listar API Keys",
+            description = "Ativas e revogadas, sem o segredo (apenas o prefixo).")
+    @ApiResponse(responseCode = "200", description = "Chaves do comerciante.")
     @GetMapping
     public ApiKeyListResponse list(@AuthenticationPrincipal AuthenticatedMerchant principal) {
         return new ApiKeyListResponse(service.listFor(principal.merchantId()).stream()
@@ -53,6 +64,11 @@ public class ApiKeyController {
     }
 
     /** Revoga a chave. Idempotente: revogar de novo também responde 204. */
+    @Operation(operationId = "revokeApiKey", summary = "Revogar API Key",
+            description = "Idempotente. A última chave ativa não pode ser revogada (`last_active_api_key`).")
+    @ApiResponse(responseCode = "204", description = "Revogada (ou já estava).")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void revoke(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
