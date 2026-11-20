@@ -4,12 +4,15 @@ import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentIdempotencyKey;
 import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
+import com.moneyx.payment.exception.InvalidCursorException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
+import com.moneyx.payment.repository.PaymentSpecifications;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +20,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -141,6 +145,88 @@ public class PaymentService {
         }
 
         payment.markPaid(now);
+        return payment;
+    }
+
+    /**
+     * Consulta um pagamento do comerciante.
+     *
+     * @throws PaymentNotFoundException pagamento inexistente ou de outro comerciante
+     */
+    @Transactional(readOnly = true)
+    public Payment get(UUID merchantId, UUID paymentId) {
+        return paymentRepository.findByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(PaymentNotFoundException::new);
+    }
+
+    /**
+     * Lista os pagamentos do comerciante, mais recentes primeiro, com paginação por cursor.
+     *
+     * Busca limit + 1 linhas: se a linha extra vier, existe próxima página (hasMore) e ela é descartada.
+     * Assim não é preciso um COUNT(*), que ficaria caro com muitos pagamentos.
+     *
+     * @throws InvalidCursorException startingAfter não é um pagamento deste comerciante
+     */
+    @Transactional(readOnly = true)
+    public PaymentPage list(UUID merchantId, PaymentListQuery query) {
+        Specification<Payment> spec = PaymentSpecifications.belongsTo(merchantId);
+
+        if (query.startingAfter() != null) {
+            // Buscar o cursor TAMBÉM pelo merchantId: o id de um pagamento alheio não pode servir de referência,
+            // nem revelar (pela página devolvida) quando outro comerciante criou um pagamento.
+            Payment cursor = paymentRepository.findByIdAndMerchantId(query.startingAfter(), merchantId)
+                    .orElseThrow(InvalidCursorException::new);
+            spec = spec.and(PaymentSpecifications.after(cursor.getCreatedAt(), cursor.getId()));
+        }
+        if (query.status() != null) {
+            spec = spec.and(PaymentSpecifications.hasStatus(query.status()));
+        }
+        if (query.externalReference() != null) {
+            spec = spec.and(PaymentSpecifications.hasExternalReference(query.externalReference()));
+        }
+
+        int limit = query.limit();
+        List<Payment> rows = paymentRepository.findBy(spec, q -> q
+                .sortBy(PaymentSpecifications.NEWEST_FIRST)
+                .limit(limit + 1)
+                .all());
+
+        boolean hasMore = rows.size() > limit;
+        return new PaymentPage(hasMore ? rows.subList(0, limit) : rows, hasMore);
+    }
+
+    /**
+     * Cancela um pagamento PENDING.
+     *
+     * Idempotente: cancelar um pagamento já CANCELED devolve o próprio pagamento, sem erro
+     * (o cliente pode repetir a requisição com segurança, por exemplo após um timeout de rede).
+     *
+     * Usa o mesmo lock pessimista do "pagar": um "pagar" e um "cancelar" simultâneos são serializados,
+     * exatamente um vence e o outro recebe o motivo correto (ex.: "já está PAID").
+     *
+     * @throws PaymentNotFoundException   pagamento inexistente ou de outro comerciante
+     * @throws PaymentNotPendingException pagamento PAID ou EXPIRED
+     * @throws PaymentExpiredException    prazo encerrado (mesmo que o status ainda seja PENDING)
+     */
+    @Transactional
+    public Payment cancel(UUID merchantId, UUID paymentId) {
+        Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(PaymentNotFoundException::new);
+
+        if (payment.getStatus() == PaymentStatus.CANCELED) {
+            return payment;
+        }
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            throw new PaymentNotPendingException(payment.getStatus());
+        }
+
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        // O estado real de um PENDING vencido é "expirado": a Etapa 5 (job) vai marcá-lo como EXPIRED.
+        if (payment.isPastExpiration(now)) {
+            throw new PaymentExpiredException();
+        }
+
+        payment.cancel(now);
         return payment;
     }
 }

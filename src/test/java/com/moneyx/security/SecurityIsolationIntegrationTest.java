@@ -229,6 +229,64 @@ class SecurityIsolationIntegrationTest {
                 .andExpect(jsonPath("$.status").value("PAID"));
     }
 
+    @Test
+    void merchantCannotReadAnotherMerchantsPaymentAndTheAnswerMatchesANonexistentOne() throws Exception {
+        String paymentOfA = createPayment(merchantA, "key-" + UUID.randomUUID(), 4990);
+
+        String foreign = mockMvc.perform(get("/v1/payments/{id}", paymentOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+        String nonexistent = mockMvc.perform(get("/v1/payments/{id}", UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+
+        // Mesma resposta (exceto o "instance", que é a URL pedida): B não descobre que o id existe.
+        assertThat(JsonPath.<String>read(foreign, "$.detail")).isEqualTo(JsonPath.read(nonexistent, "$.detail"));
+
+        mockMvc.perform(get("/v1/payments/{id}", paymentOfA).header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(paymentOfA));
+    }
+
+    @Test
+    void merchantListsOnlyItsOwnPaymentsAndCannotUseAForeignCursor() throws Exception {
+        String paymentOfA = createPayment(merchantA, "key-" + UUID.randomUUID(), 4990);
+        String paymentOfB = createPayment(merchantB, "key-" + UUID.randomUUID(), 15000);
+
+        mockMvc.perform(get("/v1/payments").header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(paymentOfA))
+                .andExpect(jsonPath("$.hasMore").value(false));
+
+        // O id de um pagamento de B não serve como cursor para A (e não revela que existe).
+        mockMvc.perform(get("/v1/payments")
+                        .param("startingAfter", paymentOfB)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid_starting_after"));
+    }
+
+    @Test
+    void merchantCannotCancelAnotherMerchantsPayment() throws Exception {
+        String paymentOfA = createPayment(merchantA, "key-" + UUID.randomUUID(), 4990);
+
+        mockMvc.perform(post("/v1/payments/{id}/cancel", paymentOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Payment not found"));
+
+        // Continua PENDING e o dono consegue cancelar (prova que o 404 acima foi por isolamento).
+        mockMvc.perform(get("/v1/payments/{id}", paymentOfA).header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(jsonPath("$.status").value("PENDING"));
+        mockMvc.perform(post("/v1/payments/{id}/cancel", paymentOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELED"));
+    }
+
     private String createPayment(Registered merchant, String idempotencyKey, long amount) throws Exception {
         return JsonPath.read(mockMvc.perform(post("/v1/payments")
                         .header(HttpHeaders.AUTHORIZATION, merchant.bearer())

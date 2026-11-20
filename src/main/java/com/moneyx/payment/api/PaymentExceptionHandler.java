@@ -1,6 +1,7 @@
 package com.moneyx.payment.api;
 
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
+import com.moneyx.payment.exception.InvalidCursorException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
@@ -29,6 +30,11 @@ public class PaymentExceptionHandler {
     @ExceptionHandler(IdempotencyKeyReusedException.class)
     public ProblemDetail handleKeyReused(IdempotencyKeyReusedException ex) {
         return withCode(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage(), "idempotency_key_reused");
+    }
+
+    @ExceptionHandler(InvalidCursorException.class)
+    public ProblemDetail handleInvalidCursor(InvalidCursorException ex) {
+        return withCode(HttpStatus.BAD_REQUEST, ex.getMessage(), "invalid_starting_after");
     }
 
     @ExceptionHandler(PaymentNotFoundException.class)
@@ -60,8 +66,9 @@ public class PaymentExceptionHandler {
     }
 
     /**
-     * Regra do domínio violada (valor, prazo, textos). A validação do DTO já cobre esses limites;
-     * este tratamento é uma segunda linha de defesa para nunca responder 500 por dado inválido.
+     * Regra violada em dado de entrada: parâmetros da listagem (limit, externalReference, validados em
+     * PaymentListQuery) ou regras do domínio (valor, prazo, textos). Na criação, a validação do DTO já cobre
+     * esses limites; aqui fica a segunda linha de defesa para nunca responder 500 por dado inválido.
      */
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleInvalidPayment(IllegalArgumentException ex) {
