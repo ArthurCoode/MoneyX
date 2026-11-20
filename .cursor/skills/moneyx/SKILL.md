@@ -98,10 +98,11 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 | RabbitMQ | Mensageria assíncrona, futuro |
 | Docker | Infraestrutura local |
 | JUnit 5 | Testes |
+| Testcontainers 2.x | PostgreSQL descartável em Docker para os testes |
 | Mockito | Testes com dependências simuladas |
 | Spring Security | Segurança e autenticação |
 | OpenAPI / Swagger | Documentação da API |
-| GitHub Actions | CI/CD, futuro |
+| GitHub Actions | CI: build + testes a cada push/PR (`.github/workflows/ci.yml`) |
 
 ### Decisões importantes
 
@@ -307,17 +308,30 @@ diferente vira um contexto em cache com pool próprio (10 conexões) e a suíte 
 PostgreSQL. `src/test/resources/spring.properties` limita o cache a 5 contextos (`spring.test.context.cache.maxSize`).
 Pico medido depois da mudança: 41 conexões.
 
-Executar todos os testes (requer o container PostgreSQL ativo e `POSTGRES_PASSWORD` definido):
+Executar todos os testes (requer apenas o **Docker rodando**; não usa o banco de desenvolvimento nem `POSTGRES_PASSWORD`):
 
 ```powershell
 .\mvnw.cmd test
 ```
 
+Mesmo comando do CI (testes + empacotamento): `.\mvnw.cmd -B -ntp verify`.
+
 Nunca criar `src/test/resources/application.properties` (esconderia o principal); propriedades de teste ficam em
 `src/test/resources/config/application.properties`, que é carregado além do principal.
 
-Os testes de integração utilizam atualmente o banco de desenvolvimento, com rollback ao final de cada teste.
-Avaliar Testcontainers na Fase 6 para isolar o banco de testes.
+**Banco dos testes: Testcontainers** (desde 2026-11-20). `src/test/resources/config/application.properties` define
+`spring.datasource.url=jdbc:tc:postgresql:17-alpine:///moneyx?TC_DAEMON=true`: o driver do Testcontainers sobe um
+PostgreSQL 17 descartável na primeira conexão, o Flyway aplica todas as migrations nele, e o mesmo container é usado
+pela execução inteira (TC_DAEMON). O container `ryuk` o remove segundos depois que a JVM termina. Comprovado: suíte
+completa com **0 conexões** no banco de desenvolvimento. Nenhuma classe de teste precisa saber disso (não usar
+`@ServiceConnection` por classe: criaria contextos novos). Os testes continuam limpando o que criam (isolamento entre
+classes dentro da mesma execução), e o relógio em 2020 dos testes de jobs continua valendo pelo mesmo motivo.
+
+**CI:** `.github/workflows/ci.yml` roda `./mvnw -B -ntp verify` em push na `main` e em pull requests (ubuntu-latest,
+Temurin 21, cache do Maven, `permissions: contents: read`, cancela execuções antigas do mesmo branch, publica
+`target/surefire-reports` só em caso de falha). Sem segredos: os runners do GitHub já têm Docker. O `mvnw` precisa
+estar com permissão de execução no git (`git update-index --chmod=+x mvnw`). Actions por tag de versão maior;
+fixar por hash + Dependabot na revisão de segurança.
 
 ## 7. Infraestrutura PostgreSQL
 
@@ -833,7 +847,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [ ] Linha do tempo de webhooks: coluna de sequência para ordenação estável (ver limitação na Fase 5).
 - [ ] Documentar API.
 - [ ] Criar Docker Compose completo.
-- [ ] Criar pipeline CI.
+- [x] Criar pipeline CI (GitHub Actions) e isolar o banco dos testes (Testcontainers).
 - [ ] Revisar segurança e observabilidade.
 
 ### Fase 7 — Evolução
