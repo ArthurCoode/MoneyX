@@ -1,5 +1,10 @@
 package com.moneyx.payment.api;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.Operation;
 import com.moneyx.payment.api.dto.CreatePaymentRequest;
 import com.moneyx.payment.api.dto.PaymentListResponse;
 import com.moneyx.payment.service.PaymentView;
@@ -24,6 +29,7 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.net.URI;
 import java.util.UUID;
 
+@Tag(name = "Payments")
 @RestController
 @RequestMapping("/v1/payments")
 public class PaymentController {
@@ -44,10 +50,15 @@ public class PaymentController {
      * O header Idempotency-Key é OBRIGATÓRIO (ausente -> 400). Repetir a requisição com a mesma
      * chave e o mesmo corpo devolve o pagamento original, com o header Idempotent-Replayed: true.
      */
+    @Operation(operationId = "createPayment", summary = "Criar pagamento Pix",
+            description = "Cria uma cobrança Pix com BR Code (`pix.copyPaste`). Exige `Idempotency-Key`: repetir a mesma chave e o mesmo corpo devolve o pagamento original.")
+    @ApiResponse(responseCode = "201", description = "Pagamento criado (ou devolvido, se for repetição).", headers = @Header(name = "Idempotent-Replayed", description = "true quando a resposta é de uma repetição.", schema = @io.swagger.v3.oas.annotations.media.Schema(types = {"boolean"})))
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "422", ref = "#/components/responses/UnprocessableContent")
     @PostMapping
     public ResponseEntity<PaymentView> create(
             @AuthenticationPrincipal AuthenticatedMerchant principal,
-            @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey,
+            @Parameter(description = "Obrigatório. 1 a 255 caracteres ASCII visíveis, válido por 24 h. Gere uma chave nova (ex.: UUID) por pagamento.") @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey,
             @Valid @RequestBody CreatePaymentRequest request) {
 
         PaymentCreation creation = service.create(principal.merchantId(), idempotencyKey, request.toCommand());
@@ -64,6 +75,11 @@ public class PaymentController {
     }
 
     /** Consulta um pagamento. 404 se não existir ou for de outro comerciante. */
+    @Operation(operationId = "getPayment", summary = "Consultar pagamento",
+            description = "Estado atual do pagamento.")
+    @ApiResponse(responseCode = "200", description = "Pagamento.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @GetMapping("/{id}")
     public PaymentView get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return PaymentView.from(service.get(principal.merchantId(), id));
@@ -75,6 +91,10 @@ public class PaymentController {
      * Paginação por cursor: ?limit=10&startingAfter=<id do último item da página anterior>.
      * Filtros opcionais: status e externalReference.
      */
+    @Operation(operationId = "listPayments", summary = "Listar pagamentos",
+            description = "Mais recentes primeiro, paginação por cursor. Filtros: `status`, `externalReference`.")
+    @ApiResponse(responseCode = "200", description = "Página de pagamentos.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
     @GetMapping
     public PaymentListResponse list(
             @AuthenticationPrincipal AuthenticatedMerchant principal,
@@ -91,6 +111,11 @@ public class PaymentController {
      * Cancela um pagamento PENDING. Ação explícita (POST), não DELETE: o pagamento continua existindo,
      * apenas muda de estado. Idempotente: cancelar de novo um pagamento CANCELED responde 200.
      */
+    @Operation(operationId = "cancelPayment", summary = "Cancelar pagamento",
+            description = "Só PENDING dentro do prazo. Idempotente: cancelar de novo responde 200. PAID/EXPIRED → 409 `payment_not_pending`; prazo vencido → 409 `payment_expired`.")
+    @ApiResponse(responseCode = "200", description = "Pagamento cancelado.")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
+    @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping("/{id}/cancel")
     public PaymentView cancel(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return PaymentView.from(service.cancel(principal.merchantId(), id));

@@ -1,0 +1,1660 @@
+{
+  "openapi" : "3.1.0",
+  "info" : {
+    "description" : "Infraestrutura de pagamentos Pix do MoneyX. **Ambiente sandbox**: dados de teste, nenhum dinheiro real.\n\n## Autenticação\nCadastre-se em `POST /v1/merchants`: a resposta traz a primeira API Key **uma única vez**. Envie-a em todas\nas outras chamadas no header `Authorization: Bearer mx_test_...`. O comerciante é sempre identificado pela\nchave, nunca por um id na URL.\n\n## Valores\nSempre em **centavos** (inteiro): R$ 49,90 = `4990`. Decimais são recusados.\n\n## Idempotência\n`POST /v1/payments` exige o header `Idempotency-Key` (1 a 255 caracteres ASCII visíveis, válida por 24 h).\nRepetir a mesma chave com o mesmo corpo devolve o pagamento original com `Idempotent-Replayed: true`;\ncom outro corpo, `422 idempotency_key_reused`. Gere uma chave nova (ex.: UUID) por pagamento e reutilize-a\napenas para repetir a MESMA requisição (ex.: depois de um timeout).\n\n## Paginação\nListagens usam cursor: `?limit=10&startingAfter=<id do último item da página anterior>`.\nA resposta é `{\"data\": [...], \"hasMore\": true}`.\n\n## Erros\nFormato Problem Details (RFC 9457, `application/problem+json`). Use o campo `code` (estável) para decidir\no que fazer; `detail` é para humanos e pode mudar. Recurso de outro comerciante responde 404, igual a um\nrecurso inexistente.\n\n## Limites\nO cadastro público aceita 5 tentativas por IP em rajada e recupera 1 a cada 2 minutos. Acima disso:\n`429 rate_limit_exceeded` com `Retry-After` (segundos).\n\n## Webhooks\nCadastre uma URL em `POST /v1/webhook-endpoints` para receber os eventos (seção **Webhooks** deste documento).\nCada envio é assinado com o segredo do endpoint (`whsec_...`, mostrado uma única vez no cadastro).\nA entrega é \"pelo menos uma vez\": descarte eventos repetidos pelo `id`.\n",
+    "title" : "MoneyX API",
+    "version" : "v1"
+  },
+  "servers" : [ {
+    "url" : "http://localhost:8080",
+    "description" : "Sandbox local"
+  } ],
+  "security" : [ {
+    "bearerAuth" : [ ]
+  } ],
+  "tags" : [ {
+    "description" : "Cadastro e consulta do próprio comerciante",
+    "name" : "Merchants"
+  }, {
+    "description" : "Chaves de acesso do comerciante",
+    "name" : "API Keys"
+  }, {
+    "description" : "Cobranças Pix: criação, consulta, listagem e cancelamento",
+    "name" : "Payments"
+  }, {
+    "description" : "Simulações que, em produção, acontecem fora do MoneyX",
+    "name" : "Sandbox"
+  }, {
+    "description" : "Histórico de eventos (o mesmo conteúdo enviado por webhook)",
+    "name" : "Events"
+  }, {
+    "description" : "Para onde o MoneyX envia os eventos",
+    "name" : "Webhook Endpoints"
+  }, {
+    "description" : "Entregas de webhook: depuração e reenvio",
+    "name" : "Webhook Deliveries"
+  } ],
+  "paths" : {
+    "/v1/api-keys" : {
+      "get" : {
+        "description" : "Ativas e revogadas, sem o segredo (apenas o prefixo).",
+        "operationId" : "listApiKeys",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ApiKeyListResponse"
+                }
+              }
+            },
+            "description" : "Chaves do comerciante."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Listar API Keys",
+        "tags" : [ "API Keys" ]
+      },
+      "post" : {
+        "description" : "O segredo aparece **somente** nesta resposta. Máximo de 5 chaves ativas.",
+        "operationId" : "createApiKey",
+        "responses" : {
+          "201" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CreatedApiKeyResponse"
+                }
+              }
+            },
+            "description" : "Chave criada."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Criar API Key",
+        "tags" : [ "API Keys" ]
+      }
+    },
+    "/v1/api-keys/{id}" : {
+      "delete" : {
+        "description" : "Idempotente. A última chave ativa não pode ser revogada (`last_active_api_key`).",
+        "operationId" : "revokeApiKey",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "Revogada (ou já estava)."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Revogar API Key",
+        "tags" : [ "API Keys" ]
+      }
+    },
+    "/v1/events" : {
+      "get" : {
+        "description" : "Mais recentes primeiro, paginação por cursor, filtro `type`. Use para recuperar eventos perdidos.",
+        "operationId" : "listEvents",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }, {
+          "in" : "query",
+          "name" : "startingAfter",
+          "required" : false,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "in" : "query",
+          "name" : "type",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/EventListResponse"
+                }
+              }
+            },
+            "description" : "Página de eventos."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Listar eventos",
+        "tags" : [ "Events" ]
+      }
+    },
+    "/v1/events/{id}" : {
+      "get" : {
+        "description" : "Mesmo conteúdo enviado por webhook.",
+        "operationId" : "getEvent",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/EventView"
+                }
+              }
+            },
+            "description" : "Evento."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          }
+        },
+        "summary" : "Consultar evento",
+        "tags" : [ "Events" ]
+      }
+    },
+    "/v1/merchants" : {
+      "post" : {
+        "description" : "Auto-cadastro. A resposta traz a primeira API Key **uma única vez** (`Cache-Control: no-store`). Limitado a 5 tentativas por IP (+1 a cada 2 min).",
+        "operationId" : "createMerchant",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreateMerchantRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MerchantRegistrationResponse"
+                }
+              }
+            },
+            "description" : "Comerciante criado, com a primeira API Key."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/TooManyRequests"
+          }
+        },
+        "security" : [ ],
+        "summary" : "Cadastrar comerciante (público)",
+        "tags" : [ "Merchants" ]
+      }
+    },
+    "/v1/merchants/me" : {
+      "get" : {
+        "description" : "O comerciante é identificado pela API Key, nunca pela URL.",
+        "operationId" : "getCurrentMerchant",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/MerchantResponse"
+                }
+              }
+            },
+            "description" : "Comerciante da API Key usada."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Consultar o próprio comerciante",
+        "tags" : [ "Merchants" ]
+      }
+    },
+    "/v1/payments" : {
+      "get" : {
+        "description" : "Mais recentes primeiro, paginação por cursor. Filtros: `status`, `externalReference`.",
+        "operationId" : "listPayments",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }, {
+          "in" : "query",
+          "name" : "startingAfter",
+          "required" : false,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "in" : "query",
+          "name" : "status",
+          "required" : false,
+          "schema" : {
+            "type" : "string",
+            "enum" : [ "PENDING", "PAID", "CANCELED", "EXPIRED" ]
+          }
+        }, {
+          "in" : "query",
+          "name" : "externalReference",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PaymentListResponse"
+                }
+              }
+            },
+            "description" : "Página de pagamentos."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Listar pagamentos",
+        "tags" : [ "Payments" ]
+      },
+      "post" : {
+        "description" : "Cria uma cobrança Pix com BR Code (`pix.copyPaste`). Exige `Idempotency-Key`: repetir a mesma chave e o mesmo corpo devolve o pagamento original.",
+        "operationId" : "createPayment",
+        "parameters" : [ {
+          "description" : "Obrigatório. 1 a 255 caracteres ASCII visíveis, válido por 24 h. Gere uma chave nova (ex.: UUID) por pagamento.",
+          "in" : "header",
+          "name" : "Idempotency-Key",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreatePaymentRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PaymentView"
+                }
+              }
+            },
+            "description" : "Pagamento criado (ou devolvido, se for repetição).",
+            "headers" : {
+              "Idempotent-Replayed" : {
+                "description" : "true quando a resposta é de uma repetição.",
+                "schema" : {
+                  "type" : "boolean"
+                },
+                "style" : "simple"
+              }
+            }
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "422" : {
+            "$ref" : "#/components/responses/UnprocessableContent"
+          }
+        },
+        "summary" : "Criar pagamento Pix",
+        "tags" : [ "Payments" ]
+      }
+    },
+    "/v1/payments/{id}" : {
+      "get" : {
+        "description" : "Estado atual do pagamento.",
+        "operationId" : "getPayment",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PaymentView"
+                }
+              }
+            },
+            "description" : "Pagamento."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          }
+        },
+        "summary" : "Consultar pagamento",
+        "tags" : [ "Payments" ]
+      }
+    },
+    "/v1/payments/{id}/cancel" : {
+      "post" : {
+        "description" : "Só PENDING dentro do prazo. Idempotente: cancelar de novo responde 200. PAID/EXPIRED → 409 `payment_not_pending`; prazo vencido → 409 `payment_expired`.",
+        "operationId" : "cancelPayment",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PaymentView"
+                }
+              }
+            },
+            "description" : "Pagamento cancelado."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Cancelar pagamento",
+        "tags" : [ "Payments" ]
+      }
+    },
+    "/v1/sandbox/payments/{id}/pay" : {
+      "post" : {
+        "description" : "SANDBOX: simula o pagador pagando o Pix. Em produção quem confirma é o PSP.",
+        "operationId" : "simulatePixPayment",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/PaymentView"
+                }
+              }
+            },
+            "description" : "Pagamento PAID."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Simular o pagamento do Pix",
+        "tags" : [ "Sandbox" ]
+      }
+    },
+    "/v1/webhook-deliveries/{id}/retry" : {
+      "post" : {
+        "description" : "Só entregas `failed`, com o endpoint ativo. Volta para a fila e é enviada em até 5 s.",
+        "operationId" : "retryWebhookDelivery",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WebhookDeliveryResponse"
+                }
+              }
+            },
+            "description" : "Entrega de volta na fila."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Reenviar entrega",
+        "tags" : [ "Webhook Deliveries" ]
+      }
+    },
+    "/v1/webhook-endpoints" : {
+      "get" : {
+        "description" : "Endpoints não removidos (inclusive desativados).",
+        "operationId" : "listWebhookEndpoints",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WebhookEndpointListResponse"
+                }
+              }
+            },
+            "description" : "Endpoints."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Listar endpoints",
+        "tags" : [ "Webhook Endpoints" ]
+      },
+      "post" : {
+        "description" : "Somente `https`, sem destinos internos. O segredo de assinatura (`whsec_...`) aparece **somente** nesta resposta. Máximo de 5 endpoints.",
+        "operationId" : "createWebhookEndpoint",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreateWebhookEndpointRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/CreatedWebhookEndpointResponse"
+                }
+              }
+            },
+            "description" : "Endpoint criado."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Cadastrar endpoint de webhook",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "/v1/webhook-endpoints/{id}" : {
+      "delete" : {
+        "description" : "Remoção lógica e idempotente. A linha do tempo continua disponível.",
+        "operationId" : "deleteWebhookEndpoint",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "204" : {
+            "description" : "Removido (ou já estava)."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          }
+        },
+        "summary" : "Remover endpoint",
+        "tags" : [ "Webhook Endpoints" ]
+      },
+      "get" : {
+        "description" : "Inclusive removidos (`deletedAt`) e desativados (`disabledAt`).",
+        "operationId" : "getWebhookEndpoint",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WebhookEndpointResponse"
+                }
+              }
+            },
+            "description" : "Endpoint."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          }
+        },
+        "summary" : "Consultar endpoint",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "/v1/webhook-endpoints/{id}/deliveries" : {
+      "get" : {
+        "description" : "Tentativas, último erro, status HTTP e próxima tentativa. Paginação por cursor, filtro `status`.",
+        "operationId" : "listWebhookDeliveries",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "in" : "query",
+          "name" : "limit",
+          "required" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }, {
+          "in" : "query",
+          "name" : "startingAfter",
+          "required" : false,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }, {
+          "in" : "query",
+          "name" : "status",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WebhookDeliveryListResponse"
+                }
+              }
+            },
+            "description" : "Página de entregas."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          }
+        },
+        "summary" : "Listar entregas do endpoint",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "/v1/webhook-endpoints/{id}/enable" : {
+      "post" : {
+        "description" : "Reativa um endpoint desativado por falhas. Idempotente.",
+        "operationId" : "enableWebhookEndpoint",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WebhookEndpointResponse"
+                }
+              }
+            },
+            "description" : "Endpoint ativo."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Reativar endpoint",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "/v1/webhook-endpoints/{id}/history" : {
+      "get" : {
+        "description" : "O que aconteceu com o endpoint, quando e com qual API Key (`null` = ação automática do sistema).",
+        "operationId" : "getWebhookEndpointHistory",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WebhookEndpointHistoryResponse"
+                }
+              }
+            },
+            "description" : "Linha do tempo, do mais antigo ao mais recente."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "404" : {
+            "$ref" : "#/components/responses/NotFound"
+          }
+        },
+        "summary" : "Linha do tempo do endpoint",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    }
+  },
+  "components" : {
+    "responses" : {
+      "BadRequest" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Requisição inválida (campos, parâmetros ou JSON)."
+      },
+      "Conflict" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Regra de negócio violada; veja `code`."
+      },
+      "Forbidden" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Comerciante suspenso ou encerrado."
+      },
+      "NotFound" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."
+      },
+      "TooManyRequests" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Limite de tentativas atingido.",
+        "headers" : {
+          "Retry-After" : {
+            "description" : "Segundos até poder tentar de novo.",
+            "schema" : {
+              "type" : "integer",
+              "format" : "int32"
+            }
+          }
+        }
+      },
+      "Unauthorized" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "API Key ausente, inválida ou revogada.",
+        "headers" : {
+          "WWW-Authenticate" : {
+            "schema" : {
+              "type" : "string",
+              "default" : "Bearer"
+            }
+          }
+        }
+      },
+      "UnprocessableContent" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Idempotency-Key já usada com outro corpo (`idempotency_key_reused`)."
+      }
+    },
+    "schemas" : {
+      "ApiKeyListResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ApiKeyResponse"
+            }
+          }
+        }
+      },
+      "ApiKeyResponse" : {
+        "type" : "object",
+        "properties" : {
+          "active" : {
+            "type" : "boolean"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "prefix" : {
+            "type" : "string"
+          },
+          "revokedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "CreateMerchantRequest" : {
+        "type" : "object",
+        "properties" : {
+          "document" : {
+            "type" : "string",
+            "minLength" : 1,
+            "pattern" : "\\d{11}|\\d{14}|\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}|\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}"
+          },
+          "email" : {
+            "type" : "string",
+            "format" : "email",
+            "maxLength" : 254,
+            "minLength" : 0
+          },
+          "legalName" : {
+            "type" : "string",
+            "maxLength" : 150,
+            "minLength" : 0
+          }
+        },
+        "required" : [ "document", "email", "legalName" ]
+      },
+      "CreatePaymentRequest" : {
+        "type" : "object",
+        "properties" : {
+          "amount" : {
+            "type" : "integer",
+            "format" : "int64",
+            "maximum" : 10000000,
+            "minimum" : 100
+          },
+          "currency" : {
+            "type" : "string",
+            "pattern" : "BRL"
+          },
+          "description" : {
+            "type" : "string",
+            "maxLength" : 255,
+            "minLength" : 0
+          },
+          "expiresInSeconds" : {
+            "type" : "integer",
+            "format" : "int64",
+            "maximum" : 86400,
+            "minimum" : 300
+          },
+          "externalReference" : {
+            "type" : "string",
+            "maxLength" : 64,
+            "minLength" : 0
+          }
+        },
+        "required" : [ "amount", "currency" ]
+      },
+      "CreateWebhookEndpointRequest" : {
+        "type" : "object",
+        "properties" : {
+          "enabledEvents" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "url" : {
+            "type" : "string",
+            "minLength" : 1
+          }
+        },
+        "required" : [ "url" ]
+      },
+      "CreatedApiKeyResponse" : {
+        "type" : "object",
+        "properties" : {
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "key" : {
+            "type" : "string"
+          },
+          "prefix" : {
+            "type" : "string"
+          }
+        }
+      },
+      "CreatedWebhookEndpointResponse" : {
+        "type" : "object",
+        "properties" : {
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "enabledEvents" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "secret" : {
+            "type" : "string"
+          },
+          "secretPrefix" : {
+            "type" : "string"
+          },
+          "url" : {
+            "type" : "string"
+          }
+        }
+      },
+      "Event" : {
+        "type" : "object",
+        "description" : "Envelope do evento. Idêntico a GET /v1/events/{id}.",
+        "properties" : {
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "data" : {
+            "type" : "object",
+            "description" : "Retrato do pagamento no momento do evento (mesmo formato de GET /v1/payments/{id})."
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid",
+            "description" : "Use para descartar repetições."
+          },
+          "type" : {
+            "type" : "string",
+            "enum" : [ "payment.created", "payment.paid", "payment.canceled", "payment.expired" ]
+          }
+        }
+      },
+      "EventListResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/EventView"
+            }
+          },
+          "hasMore" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "EventView" : {
+        "type" : "object",
+        "properties" : {
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "data" : {
+            "type" : "object",
+            "description" : "Retrato do recurso no momento do evento (objeto JSON)."
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "type" : {
+            "type" : "string"
+          }
+        }
+      },
+      "MerchantRegistrationResponse" : {
+        "type" : "object",
+        "properties" : {
+          "apiKey" : {
+            "$ref" : "#/components/schemas/CreatedApiKeyResponse"
+          },
+          "merchant" : {
+            "$ref" : "#/components/schemas/MerchantResponse"
+          }
+        }
+      },
+      "MerchantResponse" : {
+        "type" : "object",
+        "properties" : {
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "document" : {
+            "type" : "string"
+          },
+          "email" : {
+            "type" : "string"
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "legalName" : {
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "ACTIVE", "SUSPENDED", "CLOSED" ]
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          }
+        }
+      },
+      "PaymentListResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/PaymentView"
+            }
+          },
+          "hasMore" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "PaymentView" : {
+        "type" : "object",
+        "properties" : {
+          "amount" : {
+            "type" : "integer",
+            "format" : "int64"
+          },
+          "canceledAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "currency" : {
+            "type" : "string"
+          },
+          "description" : {
+            "type" : "string"
+          },
+          "expiresAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "externalReference" : {
+            "type" : "string"
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "paidAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "pix" : {
+            "$ref" : "#/components/schemas/Pix"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        }
+      },
+      "Pix" : {
+        "type" : "object",
+        "properties" : {
+          "copyPaste" : {
+            "type" : "string"
+          },
+          "txid" : {
+            "type" : "string"
+          }
+        }
+      },
+      "Problem" : {
+        "type" : "object",
+        "description" : "Erro no formato Problem Details (RFC 9457).",
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "description" : "Código estável para máquinas, ex.: `payment_not_pending`."
+          },
+          "detail" : {
+            "type" : "string",
+            "description" : "Mensagem para humanos (pode mudar)."
+          },
+          "errors" : {
+            "type" : "array",
+            "description" : "Somente em erros de validação.",
+            "items" : {
+              "type" : "object",
+              "properties" : {
+                "field" : {
+                  "type" : "string"
+                },
+                "message" : {
+                  "type" : "string"
+                }
+              }
+            }
+          },
+          "instance" : {
+            "type" : "string",
+            "example" : "/v1/payments/…/cancel"
+          },
+          "status" : {
+            "type" : "integer",
+            "format" : "int32",
+            "example" : 409
+          },
+          "title" : {
+            "type" : "string",
+            "example" : "Conflict"
+          },
+          "type" : {
+            "type" : "string",
+            "example" : "about:blank"
+          }
+        }
+      },
+      "WebhookDeliveryListResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/WebhookDeliveryResponse"
+            }
+          },
+          "hasMore" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "WebhookDeliveryResponse" : {
+        "type" : "object",
+        "properties" : {
+          "attempts" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "deliveredAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "endpointId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "eventId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "lastAttemptAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "lastDurationMs" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "lastError" : {
+            "type" : "string"
+          },
+          "lastStatusCode" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "nextAttemptAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        }
+      },
+      "WebhookEndpointHistoryEntry" : {
+        "type" : "object",
+        "properties" : {
+          "action" : {
+            "type" : "string"
+          },
+          "apiKeyId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "occurredAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "snapshot" : {
+            "type" : "object",
+            "description" : "url e enabledEvents naquele momento (nunca o segredo)."
+          }
+        }
+      },
+      "WebhookEndpointHistoryResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/WebhookEndpointHistoryEntry"
+            }
+          }
+        }
+      },
+      "WebhookEndpointListResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/WebhookEndpointResponse"
+            }
+          }
+        }
+      },
+      "WebhookEndpointResponse" : {
+        "type" : "object",
+        "properties" : {
+          "createdAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "deletedAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "disabledAt" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "enabledEvents" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "secretPrefix" : {
+            "type" : "string"
+          },
+          "url" : {
+            "type" : "string"
+          }
+        }
+      }
+    },
+    "securitySchemes" : {
+      "bearerAuth" : {
+        "bearerFormat" : "API Key (mx_test_...)",
+        "description" : "Envie a API Key no header `Authorization: Bearer mx_test_...`.",
+        "scheme" : "bearer",
+        "type" : "http"
+      }
+    }
+  },
+  "webhooks" : {
+    "payment.canceled" : {
+      "post" : {
+        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "parameters" : [ {
+          "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
+          "in" : "header",
+          "name" : "MoneyX-Signature",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "Id do evento (mesmo valor de `id` no corpo).",
+          "in" : "header",
+          "name" : "MoneyX-Event-Id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "payment.canceled",
+          "in" : "header",
+          "name" : "MoneyX-Event-Type",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/Event"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "2XX" : {
+            "description" : "Recebido. Qualquer outra resposta (ou timeout de 10 s) gera nova tentativa."
+          },
+          "default" : {
+            "description" : "Falha: nova tentativa com backoff exponencial, por até ~2,7 dias."
+          }
+        },
+        "security" : [ ],
+        "summary" : "Evento payment.canceled",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "payment.created" : {
+      "post" : {
+        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "parameters" : [ {
+          "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
+          "in" : "header",
+          "name" : "MoneyX-Signature",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "Id do evento (mesmo valor de `id` no corpo).",
+          "in" : "header",
+          "name" : "MoneyX-Event-Id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "payment.created",
+          "in" : "header",
+          "name" : "MoneyX-Event-Type",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/Event"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "2XX" : {
+            "description" : "Recebido. Qualquer outra resposta (ou timeout de 10 s) gera nova tentativa."
+          },
+          "default" : {
+            "description" : "Falha: nova tentativa com backoff exponencial, por até ~2,7 dias."
+          }
+        },
+        "security" : [ ],
+        "summary" : "Evento payment.created",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "payment.expired" : {
+      "post" : {
+        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "parameters" : [ {
+          "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
+          "in" : "header",
+          "name" : "MoneyX-Signature",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "Id do evento (mesmo valor de `id` no corpo).",
+          "in" : "header",
+          "name" : "MoneyX-Event-Id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "payment.expired",
+          "in" : "header",
+          "name" : "MoneyX-Event-Type",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/Event"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "2XX" : {
+            "description" : "Recebido. Qualquer outra resposta (ou timeout de 10 s) gera nova tentativa."
+          },
+          "default" : {
+            "description" : "Falha: nova tentativa com backoff exponencial, por até ~2,7 dias."
+          }
+        },
+        "security" : [ ],
+        "summary" : "Evento payment.expired",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    },
+    "payment.paid" : {
+      "post" : {
+        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "parameters" : [ {
+          "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
+          "in" : "header",
+          "name" : "MoneyX-Signature",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "Id do evento (mesmo valor de `id` no corpo).",
+          "in" : "header",
+          "name" : "MoneyX-Event-Id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "payment.paid",
+          "in" : "header",
+          "name" : "MoneyX-Event-Type",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/Event"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "2XX" : {
+            "description" : "Recebido. Qualquer outra resposta (ou timeout de 10 s) gera nova tentativa."
+          },
+          "default" : {
+            "description" : "Falha: nova tentativa com backoff exponencial, por até ~2,7 dias."
+          }
+        },
+        "security" : [ ],
+        "summary" : "Evento payment.paid",
+        "tags" : [ "Webhook Endpoints" ]
+      }
+    }
+  }
+}

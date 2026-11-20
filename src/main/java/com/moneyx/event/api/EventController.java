@@ -1,5 +1,8 @@
 package com.moneyx.event.api;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
 import com.moneyx.event.api.dto.EventListResponse;
 import com.moneyx.event.service.EventView;
 import com.moneyx.event.domain.EventType;
@@ -21,6 +24,7 @@ import java.util.UUID;
  * Serve para o comerciante reconciliar: se o sistema dele ficou fora do ar e perdeu avisos, ele lista os
  * eventos desde o último que processou.
  */
+@Tag(name = "Events")
 @RestController
 @RequestMapping("/v1/events")
 public class EventController {
@@ -31,12 +35,21 @@ public class EventController {
         this.service = service;
     }
 
+    @Operation(operationId = "getEvent", summary = "Consultar evento",
+            description = "Mesmo conteúdo enviado por webhook.")
+    @ApiResponse(responseCode = "200", description = "Evento.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @GetMapping("/{id}")
     public EventView get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return EventView.from(service.get(principal.merchantId(), id));
     }
 
     /** ?limit=10&startingAfter=<id>&type=payment.paid */
+    @Operation(operationId = "listEvents", summary = "Listar eventos",
+            description = "Mais recentes primeiro, paginação por cursor, filtro `type`. Use para recuperar eventos perdidos.")
+    @ApiResponse(responseCode = "200", description = "Página de eventos.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
     @GetMapping
     public EventListResponse list(
             @AuthenticationPrincipal AuthenticatedMerchant principal,
