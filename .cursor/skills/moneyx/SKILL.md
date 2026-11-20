@@ -236,8 +236,13 @@ api  →  service  →  repository  →  domain
 ### Documentação da API / contrato OpenAPI (definido em 2026-11-20)
 
 - springdoc-openapi **3.2.0** (construído sobre o Spring Boot 4.1.2; versão fixada em `springdoc.version`, o Boot não a
-  gerencia). Code-first. `springdoc.api-docs.version=openapi_3_1` (necessário para `webhooks`) e
-  `springdoc.writer-with-order-by-keys=true` (saída estável).
+  gerencia). Code-first. `springdoc.api-docs.version=openapi_3_1` (necessário para `webhooks`).
+- **Legibilidade da Swagger UI** (ajustada em 2026-11-20 a pedido do desenvolvedor, conferida por print headless do Edge):
+  topo curto (frase + "Primeiros passos" numerado + tabela "Regras gerais"); grupos recolhidos
+  (`doc-expansion=none`); seção Schemas escondida (`default-models-expand-depth=-1`); `persist-authorization`,
+  `display-request-duration`, `filter`. **Não usar `writer-with-order-by-keys`**: ele punha DELETE antes de GET.
+  A ordem vem do `OpenApiCustomizer` (`sortPaths`: caminhos em ordem alfabética, métodos na ordem padrão do OpenAPI;
+  webhooks na ordem do ciclo de vida, com `operationId` `paymentPaidWebhook` etc.).
 - `/v3/api-docs` e `/swagger-ui.html` são **públicos** (liberados no `SecurityConfig`), como a referência do Stripe.
   Desligáveis com `springdoc.api-docs.enabled=false` / `springdoc.swagger-ui.enabled=false`.
 - `docs/OpenApiConfig`: info + guia (`DocsText`: autenticação, centavos, idempotência, paginação, erros, limites,
@@ -251,7 +256,8 @@ api  →  service  →  repository  →  domain
 - Campos `@JsonRawValue String` são documentados como objeto com `@Schema(types = {"object"})`: no OpenAPI 3.1 o atributo
   é `types` (plural); `type` é ignorado.
 - **Teste de contrato** (`docs/OpenApiContractTest`): o `/v3/api-docs` gerado tem de ser idêntico a
-  `src/test/resources/openapi/moneyx-api.json` (comparação com JSON normalizado e fim de linha `\n`). Mudança intencional:
+  `src/test/resources/openapi/moneyx-api.json` (o teste ORDENA as chaves e usa fim de linha `\n` só na comparação,
+  para não depender da ordem de exibição). Mudança intencional:
   `.\mvnw.cmd test -Dtest=OpenApiContractTest -Dopenapi.update=true` e revisar o diff no commit. Toda mudança de DTO,
   validação ou rota exige regenerar o arquivo.
 
