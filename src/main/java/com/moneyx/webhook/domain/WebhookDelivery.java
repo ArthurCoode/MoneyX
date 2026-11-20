@@ -112,14 +112,41 @@ public class WebhookDelivery {
         this.status = WebhookDeliveryStatus.SUCCEEDED;
     }
 
-    /** Nesta etapa toda falha é definitiva (FAILED); a Etapa 4 decidirá entre reagendar ou desistir. */
-    public void recordFailure(UUID token, WebhookDeliveryError error, Integer statusCode, long durationMs, Instant now) {
+    /**
+     * Registra uma tentativa que falhou e decide, pela WebhookRetryPolicy, entre REAGENDAR (continua PENDING, com
+     * nextAttemptAt no futuro) ou DESISTIR (FAILED).
+     *
+     * @param jitter variação relativa já sorteada para a espera (0 = sem variação)
+     * @return true se foi reagendada; false se a entrega desistiu (FAILED)
+     */
+    public boolean recordFailure(UUID token, WebhookDeliveryError error, Integer statusCode, long durationMs,
+                                 Instant now, double jitter) {
         registerAttempt(token, statusCode, durationMs, now);
         this.lastError = Objects.requireNonNull(error, "error must not be null").code();
+        var retryAt = WebhookRetryPolicy.nextAttemptAt(attempts, error, now, jitter);
+        if (retryAt.isPresent()) {
+            this.nextAttemptAt = retryAt.get();
+            return true;
+        }
         this.status = WebhookDeliveryStatus.FAILED;
+        return false;
     }
 
-    /** O endpoint foi removido: a entrega não será enviada. */
+    /**
+     * Reenvio manual pedido pelo comerciante: só para entregas FAILED. Volta para a fila, para agora.
+     *
+     * As tentativas continuam contando: se a entrega já tinha esgotado a agenda, uma nova falha a devolve direto
+     * para FAILED (é "mais uma tentativa", não uma agenda nova de 3 dias).
+     */
+    public void requeue(Instant now) {
+        if (status != WebhookDeliveryStatus.FAILED) {
+            throw new IllegalStateException("Only FAILED deliveries can be retried. Current status: " + status);
+        }
+        this.status = WebhookDeliveryStatus.PENDING;
+        this.nextAttemptAt = Objects.requireNonNull(now, "now must not be null");
+    }
+
+    /** O endpoint foi removido ou desativado: a entrega não será enviada. */
     public void cancel(UUID token) {
         requireLease(token);
         clearLease();

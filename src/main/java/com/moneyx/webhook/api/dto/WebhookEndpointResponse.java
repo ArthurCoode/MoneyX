@@ -10,6 +10,7 @@ import java.util.UUID;
 /**
  * Representação pública de um endpoint. NUNCA contém o segredo: apenas o prefixo, para identificação.
  * deletedAt != null indica endpoint removido (ele continua consultável, com a sua linha do tempo).
+ * disabledAt != null indica endpoint desativado automaticamente por falhas (reative com POST /{id}/enable).
  */
 public record WebhookEndpointResponse(
         UUID id,
@@ -17,7 +18,8 @@ public record WebhookEndpointResponse(
         List<String> enabledEvents,
         String secretPrefix,
         Instant createdAt,
-        Instant deletedAt
+        Instant deletedAt,
+        Instant disabledAt
 ) {
 
     public static WebhookEndpointResponse from(WebhookEndpoint endpoint) {
@@ -27,6 +29,7 @@ public record WebhookEndpointResponse(
                 endpoint.getEnabledEvents().stream().map(EventType::value).toList(),
                 endpoint.getSecretPrefix(),
                 endpoint.getCreatedAt(),
-                endpoint.getDeletedAt());
+                endpoint.getDeletedAt(),
+                endpoint.getDisabledAt());
     }
 }

@@ -64,7 +64,9 @@ import static org.assertj.core.api.Assertions.assertThat;
         "moneyx.webhooks.allow-local-urls=true",
         "moneyx.webhooks.delivery.connect-timeout=1s",
         "moneyx.webhooks.delivery.request-timeout=1s",
-        "moneyx.webhooks.delivery.lease=5s"
+        "moneyx.webhooks.delivery.lease=5s",
+        // Sem jitter: os testes conferem os horários exatos da agenda de retentativas.
+        "moneyx.webhooks.delivery.retry-jitter=0"
 })
 @Import(TestClockConfig.class)
 class WebhookDeliveryIntegrationTest {
@@ -265,7 +267,7 @@ class WebhookDeliveryIntegrationTest {
     }
 
     @Test
-    void non2xxResponseIsAFailure() {
+    void non2xxResponseIsAFailureThatIsRetriedOneMinuteLater() {
         behavior.put("/broken", 500);
         endpoint(merchantId, "/broken", null);
         createPayment("key-1");
@@ -273,9 +275,11 @@ class WebhookDeliveryIntegrationTest {
         deliveryService.deliverDue();
 
         WebhookDelivery delivery = onlyDelivery();
-        assertThat(delivery.getStatus()).isEqualTo(WebhookDeliveryStatus.FAILED);
+        assertThat(delivery.getStatus()).isEqualTo(WebhookDeliveryStatus.PENDING);
+        assertThat(delivery.getAttempts()).isEqualTo(1);
         assertThat(delivery.getLastStatusCode()).isEqualTo(500);
         assertThat(delivery.getLastError()).isEqualTo("non_2xx_response");
+        assertThat(Duration.between(delivery.getLastAttemptAt(), delivery.getNextAttemptAt())).isEqualTo(Duration.ofMinutes(1));
     }
 
     /** Um redirecionamento poderia apontar para a rede interna: não é seguido e conta como falha. */
@@ -302,7 +306,7 @@ class WebhookDeliveryIntegrationTest {
         deliveryService.deliverDue();
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
-        assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.FAILED);
+        assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.PENDING); // reagendada
         assertThat(onlyDelivery().getLastError()).isEqualTo("timeout");
         assertThat(elapsedMs).isLessThan(2_900); // não esperou os 3 s da loja
     }
@@ -332,6 +336,7 @@ class WebhookDeliveryIntegrationTest {
         deliveryService.deliverDue();
 
         assertThat(received).isEmpty();
+        // Decisão de segurança, não falha temporária: desiste na hora, sem reagendar.
         assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.FAILED);
         assertThat(onlyDelivery().getLastError()).isEqualTo("destination_not_allowed");
     }
@@ -361,8 +366,221 @@ class WebhookDeliveryIntegrationTest {
         Map<UUID, WebhookDeliveryStatus> byEndpoint = deliveryRepository.findAll().stream()
                 .filter(d -> d.getMerchantId().equals(merchantId))
                 .collect(Collectors.toMap(WebhookDelivery::getEndpointId, WebhookDelivery::getStatus));
-        assertThat(byEndpoint).containsEntry(broken, WebhookDeliveryStatus.FAILED)
+        assertThat(byEndpoint).containsEntry(broken, WebhookDeliveryStatus.PENDING)
                 .containsEntry(healthy, WebhookDeliveryStatus.SUCCEEDED);
+    }
+
+    // ---------- retentativas ----------
+
+    @Test
+    void retryIsNotSentBeforeItsTimeAndSucceedsOnceTheStoreRecovers() {
+        behavior.put("/flaky", 503);
+        UUID endpointId = endpoint(merchantId, "/flaky", null);
+        createPayment("key-1");
+        deliveryService.deliverDue();
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(deliveryService.deliverDue()).isZero(); // ainda não é hora
+
+        behavior.remove("/flaky"); // a loja voltou
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(deliveryService.deliverDue()).isEqualTo(1);
+
+        assertThat(received).hasSize(2);
+        assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.SUCCEEDED);
+        assertThat(onlyDelivery().getAttempts()).isEqualTo(2);
+        assertThat(endpointService.get(merchantId, endpointId).getFailingSince()).isNull(); // sequência encerrada
+    }
+
+    /** A agenda inteira pelo job: 9 envios reais, depois FAILED, e nada mais é enviado. */
+    @Test
+    void givesUpAfterNineAttempts() {
+        behavior.put("/down", 500);
+        endpoint(merchantId, "/down", null);
+        createPayment("key-1");
+
+        deliveryService.deliverDue();
+        for (Duration wait : com.moneyx.webhook.domain.WebhookRetryPolicy.DELAYS) {
+            clock.advance(wait);
+            assertThat(deliveryService.deliverDue()).isEqualTo(1);
+        }
+        clock.advance(Duration.ofDays(1));
+        assertThat(deliveryService.deliverDue()).isZero();
+
+        assertThat(received).hasSize(9);
+        assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.FAILED);
+        assertThat(onlyDelivery().getAttempts()).isEqualTo(9);
+    }
+
+    // ---------- desativação automática e reativação ----------
+
+    @Test
+    void endpointFailingForThreeDaysIsDisabledByTheSystemAndRecordedInTheTimeline() {
+        behavior.put("/dead", 500);
+        UUID endpointId = endpoint(merchantId, "/dead", null);
+        createPayment("key-1");
+        deliveryService.deliverDue(); // 1ª falha: começa a sequência
+
+        clock.advance(Duration.ofDays(3));
+        createPayment("key-2");
+        deliveryService.deliverDue(); // falhas 3 dias depois: desativa
+
+        var endpoint = endpointService.get(merchantId, endpointId);
+        assertThat(endpoint.isEnabled()).isFalse();
+        assertThat(endpoint.getDisabledAt()).isNotNull();
+
+        var history = endpointService.history(merchantId, endpointId);
+        assertThat(history).extracting(h -> h.getAction().name()).containsExactly("CREATED", "DISABLED");
+        assertThat(history.getLast().getApiKeyId()).isNull(); // ação do sistema
+
+        // Desativado: novos eventos não geram entregas, e as pendentes são canceladas sem envio.
+        int before = received.size();
+        createPayment("key-3");
+        assertThat(deliveryRepository.findByEventId(lastEvent(EventType.PAYMENT_CREATED).getId())).isEmpty();
+        clock.advance(Duration.ofDays(1));
+        deliveryService.deliverDue();
+        assertThat(received).hasSize(before);
+        assertThat(deliveryRepository.findAll().stream().filter(d -> d.getMerchantId().equals(merchantId)))
+                .noneMatch(d -> d.getStatus() == WebhookDeliveryStatus.PENDING);
+    }
+
+    @Test
+    void enablingTheEndpointResumesDeliveriesAndIsRecordedWithTheApiKey() {
+        behavior.put("/dead", 500);
+        UUID endpointId = endpoint(merchantId, "/dead", null);
+        createPayment("key-1");
+        deliveryService.deliverDue();
+        clock.advance(Duration.ofDays(3));
+        createPayment("key-2");
+        deliveryService.deliverDue();
+        assertThat(endpointService.get(merchantId, endpointId).isEnabled()).isFalse();
+
+        behavior.remove("/dead");
+        // Sem avançar o relógio, DISABLED e ENABLED teriam o MESMO instante e a ordem viria do id (aleatório).
+        // Na vida real a reativação sempre acontece depois (é outra requisição); ver limitação na SKILL.
+        clock.advance(Duration.ofSeconds(30));
+        UUID otherKey = UUID.randomUUID();
+        endpointService.enable(merchantId, otherKey, endpointId);
+        endpointService.enable(merchantId, otherKey, endpointId); // idempotente: sem segundo registro
+
+        var history = endpointService.history(merchantId, endpointId);
+        assertThat(history).extracting(h -> h.getAction().name()).containsExactly("CREATED", "DISABLED", "ENABLED");
+        assertThat(history.getLast().getApiKeyId()).isEqualTo(otherKey);
+
+        // O que importa: um evento NOVO, gerado depois da reativação, volta a ser entregue.
+        received.clear();
+        createPayment("key-3");
+        String newEventId = lastEvent(EventType.PAYMENT_CREATED).getId().toString();
+        deliveryService.deliverDue();
+        assertThat(received).extracting(r -> r.header("MoneyX-Event-Id")).contains(newEventId);
+    }
+
+    @Test
+    void deletedEndpointCannotBeEnabled() {
+        UUID endpointId = endpoint(merchantId, "/hook", null);
+        endpointService.delete(merchantId, apiKeyId, endpointId);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> endpointService.enable(merchantId, apiKeyId, endpointId))
+                .isInstanceOf(com.moneyx.webhook.exception.WebhookEndpointDeletedException.class);
+    }
+
+    /**
+     * Várias entregas do MESMO endpoint falhando ao mesmo tempo atualizam a sequência de falhas do endpoint.
+     * O lock no endpoint serializa essas atualizações; sem ele, o @Version faria parte delas falhar.
+     */
+    @Test
+    void concurrentFailuresOfTheSameEndpointAreAllRecorded() throws Exception {
+        behavior.put("/broken", 500);
+        endpoint(merchantId, "/broken", null);
+        for (int i = 0; i < 20; i++) {
+            createPayment("key-" + i);
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<Integer> first = executor.submit(() -> { start.await(); return deliveryService.deliverDue(); });
+            Future<Integer> second = executor.submit(() -> { start.await(); return deliveryService.deliverDue(); });
+            start.countDown();
+            assertThat(first.get(60, TimeUnit.SECONDS) + second.get(60, TimeUnit.SECONDS)).isEqualTo(20);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(deliveryRepository.findAll().stream().filter(d -> d.getMerchantId().equals(merchantId)))
+                .hasSize(20)
+                .allSatisfy(d -> {
+                    assertThat(d.getAttempts()).isEqualTo(1);
+                    assertThat(d.getStatus()).isEqualTo(WebhookDeliveryStatus.PENDING);
+                });
+    }
+
+    // ---------- consulta e reenvio manual ----------
+
+    @Test
+    void listsDeliveriesOfAnEndpointNewestFirstWithCursorAndStatusFilter() {
+        behavior.put("/mixed", 500);
+        UUID endpointId = endpoint(merchantId, "/mixed", null);
+        for (int i = 0; i < 3; i++) {
+            createPayment("key-" + i);
+        }
+        deliveryService.deliverDue(); // 3 pendentes (reagendadas)
+
+        var first = deliveryService.list(merchantId, endpointId, new WebhookDeliveryListQuery(2, null, null));
+        var second = deliveryService.list(merchantId, endpointId,
+                new WebhookDeliveryListQuery(2, first.deliveries().getLast().getId(), null));
+        var succeeded = deliveryService.list(merchantId, endpointId,
+                new WebhookDeliveryListQuery(null, null, WebhookDeliveryStatus.SUCCEEDED));
+
+        assertThat(first.deliveries()).hasSize(2);
+        assertThat(first.hasMore()).isTrue();
+        assertThat(second.deliveries()).hasSize(1);
+        assertThat(second.hasMore()).isFalse();
+        assertThat(first.deliveries().getFirst().getCreatedAt()).isAfter(second.deliveries().getFirst().getCreatedAt());
+        assertThat(succeeded.deliveries()).isEmpty();
+
+        UUID other = newMerchant();
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> deliveryService.list(other, endpointId, WebhookDeliveryListQuery.firstPage()))
+                .isInstanceOf(com.moneyx.webhook.exception.WebhookEndpointNotFoundException.class);
+    }
+
+    @Test
+    void manualRetrySendsAFailedDeliveryAgain() {
+        UUID endpointId = endpoint(merchantId, "/hook", null);
+        jdbc.update("UPDATE webhook_endpoints SET url = 'https://10.0.0.1/hook' WHERE id = ?", endpointId);
+        createPayment("key-1");
+        deliveryService.deliverDue();
+        assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.FAILED);
+
+        // A loja corrigiu o problema (aqui: a URL volta a apontar para a loja de teste) e pede o reenvio.
+        jdbc.update("UPDATE webhook_endpoints SET url = ? WHERE id = ?", storeUrl("/hook"), endpointId);
+        WebhookDelivery requeued = deliveryService.retry(merchantId, onlyDelivery().getId());
+        assertThat(requeued.getStatus()).isEqualTo(WebhookDeliveryStatus.PENDING);
+
+        deliveryService.deliverDue();
+        assertThat(received).hasSize(1);
+        assertThat(onlyDelivery().getStatus()).isEqualTo(WebhookDeliveryStatus.SUCCEEDED);
+        assertThat(onlyDelivery().getAttempts()).isEqualTo(2);
+    }
+
+    @Test
+    void manualRetryIsRefusedWhenNotFailedForeignOrEndpointUnavailable() {
+        behavior.put("/broken", 500);
+        UUID endpointId = endpoint(merchantId, "/broken", null);
+        createPayment("key-1");
+        deliveryService.deliverDue();
+        UUID deliveryId = onlyDelivery().getId();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> deliveryService.retry(merchantId, deliveryId))
+                .isInstanceOf(com.moneyx.webhook.exception.WebhookDeliveryNotFailedException.class); // está PENDING
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> deliveryService.retry(newMerchant(), deliveryId))
+                .isInstanceOf(com.moneyx.webhook.exception.WebhookDeliveryNotFoundException.class);
+
+        jdbc.update("UPDATE webhook_deliveries SET status = 'FAILED' WHERE id = ?", deliveryId);
+        endpointService.delete(merchantId, apiKeyId, endpointId);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> deliveryService.retry(merchantId, deliveryId))
+                .isInstanceOf(com.moneyx.webhook.exception.WebhookEndpointUnavailableException.class);
     }
 
     // ---------- reserva com prazo ----------

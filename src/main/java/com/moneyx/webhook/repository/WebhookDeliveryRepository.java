@@ -3,6 +3,7 @@ package com.moneyx.webhook.repository;
 import com.moneyx.webhook.domain.WebhookDelivery;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
@@ -11,7 +12,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface WebhookDeliveryRepository extends JpaRepository<WebhookDelivery, UUID> {
+public interface WebhookDeliveryRepository extends JpaRepository<WebhookDelivery, UUID>,
+        JpaSpecificationExecutor<WebhookDelivery> {
 
     /**
      * Entregas prontas para envio: PENDING, já no horário (next_attempt_at) e sem reserva válida.
@@ -34,6 +36,14 @@ public interface WebhookDeliveryRepository extends JpaRepository<WebhookDelivery
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select d from WebhookDelivery d where d.id = :id")
     Optional<WebhookDelivery> lockById(UUID id);
+
+    /** Busca por id E dono: entrega de outro comerciante simplesmente "não existe". */
+    Optional<WebhookDelivery> findByIdAndMerchantId(UUID id, UUID merchantId);
+
+    /** Mesma busca, trancando a linha (reenvio manual concorrente com o job). */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from WebhookDelivery d where d.id = :id and d.merchantId = :merchantId")
+    Optional<WebhookDelivery> lockByIdAndMerchantId(UUID id, UUID merchantId);
 
     List<WebhookDelivery> findByEventId(UUID eventId);
 }

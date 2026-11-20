@@ -4,14 +4,23 @@ import com.moneyx.event.domain.Event;
 import com.moneyx.event.service.EventService;
 import com.moneyx.event.service.EventView;
 import com.moneyx.webhook.domain.WebhookDelivery;
+import com.moneyx.webhook.domain.WebhookDeliveryStatus;
 import com.moneyx.webhook.domain.WebhookEndpoint;
 import com.moneyx.webhook.domain.WebhookSignature;
+import com.moneyx.webhook.exception.InvalidDeliveryCursorException;
+import com.moneyx.webhook.exception.WebhookDeliveryNotFailedException;
+import com.moneyx.webhook.exception.WebhookDeliveryNotFoundException;
+import com.moneyx.webhook.exception.WebhookEndpointNotFoundException;
+import com.moneyx.webhook.exception.WebhookEndpointUnavailableException;
 import com.moneyx.webhook.repository.WebhookDeliveryRepository;
+import com.moneyx.webhook.repository.WebhookDeliverySpecifications;
 import com.moneyx.webhook.repository.WebhookEndpointRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -22,14 +31,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Envia as entregas pendentes (chamado pelo job a cada 5 s, ou diretamente nos testes).
+ * Envio das entregas de webhook (job a cada 5 s, ou diretamente nos testes), consulta e reenvio manual.
  *
  * Para cada lote, três passos, e só o primeiro e o último tocam o banco:
  * 1. RESERVA (transação curta): tranca as linhas com SKIP LOCKED e marca lease_until + lease_token;
  * 2. ENVIO (sem transação): assina e faz o POST, que pode levar segundos;
- * 3. RESULTADO (transação curta): grava o resultado SE o token ainda for o da reserva.
+ * 3. RESULTADO (transação curta): SE o token ainda for o da reserva, grava o resultado na entrega (reagenda ou
+ *    desiste, pela WebhookRetryPolicy) e atualiza a sequência de falhas do endpoint (que pode desativá-lo).
  *
  * Se a aplicação cair entre 1 e 3, a reserva vence e a entrega volta a ser elegível: a loja pode receber o mesmo
  * evento duas vezes (entrega "pelo menos uma vez") e deve deduplicar pelo id do evento.
@@ -69,6 +80,8 @@ public class WebhookDeliveryService {
         this.clock = clock;
     }
 
+    // ---------- envio (job) ----------
+
     /** @return quantas entregas foram processadas (enviadas ou canceladas) nesta execução */
     public int deliverDue() {
         int total = 0;
@@ -100,7 +113,8 @@ public class WebhookDeliveryService {
         WebhookDelivery delivery = deliveryRepository.findById(claim.deliveryId()).orElseThrow();
         WebhookEndpoint endpoint = endpointRepository.findById(delivery.getEndpointId()).orElseThrow();
 
-        if (!endpoint.isActive()) {
+        // Removido ou desativado: não envia. Eventos desse período a loja recupera por GET /v1/events.
+        if (!endpoint.isEnabled()) {
             finish(claim, d -> d.cancel(claim.token()));
             return;
         }
@@ -115,16 +129,30 @@ public class WebhookDeliveryService {
                 "MoneyX-Event-Id", event.getId().toString(),
                 "MoneyX-Event-Type", event.getType().value()));
 
-        finish(claim, d -> {
-            Instant now = now();
-            if (outcome.success()) {
-                d.recordSuccess(claim.token(), outcome.statusCode(), outcome.durationMs(), now);
-            } else {
-                d.recordFailure(claim.token(), outcome.error(), outcome.statusCode(), outcome.durationMs(), now);
-            }
-        });
-        log.info("Webhook delivery {} (event {} -> endpoint {}): {}", delivery.getId(), event.getId(),
-                endpoint.getId(), outcome.success() ? "succeeded" : "failed: " + outcome.error().code());
+        finish(claim, d -> recordOutcome(d, claim.token(), outcome, now()));
+    }
+
+    private void recordOutcome(WebhookDelivery delivery, UUID token, WebhookSender.Outcome outcome, Instant now) {
+        // O endpoint é TRANCADO: duas entregas do mesmo endpoint terminando juntas atualizam a sequência de falhas
+        // uma de cada vez (sem lock, o @Version faria uma delas falhar).
+        WebhookEndpoint endpoint = endpointRepository
+                .lockByIdAndMerchantId(delivery.getEndpointId(), delivery.getMerchantId()).orElseThrow();
+
+        if (outcome.success()) {
+            delivery.recordSuccess(token, outcome.statusCode(), outcome.durationMs(), now);
+            endpoint.recordDeliverySuccess();
+            log.info("Webhook delivery {} succeeded (attempt {})", delivery.getId(), delivery.getAttempts());
+            return;
+        }
+
+        boolean rescheduled = delivery.recordFailure(token, outcome.error(), outcome.statusCode(),
+                outcome.durationMs(), now, randomJitter());
+        if (endpoint.recordDeliveryFailure(now)) {
+            endpointService.recordAutomaticDisable(endpoint, now);
+            log.warn("Webhook endpoint {} disabled after failing since {}", endpoint.getId(), endpoint.getFailingSince());
+        }
+        log.info("Webhook delivery {} failed (attempt {}, {}): {}", delivery.getId(), delivery.getAttempts(),
+                outcome.error().code(), rescheduled ? "retry at " + delivery.getNextAttemptAt() : "giving up");
     }
 
     /**
@@ -140,6 +168,67 @@ public class WebhookDeliveryService {
             }
             change.accept(delivery);
         });
+    }
+
+    /** Sorteia a variação da próxima espera em [-retryJitter, +retryJitter]. */
+    private double randomJitter() {
+        double max = properties.retryJitter();
+        return max == 0 ? 0 : ThreadLocalRandom.current().nextDouble(-max, max);
+    }
+
+    // ---------- consulta e reenvio manual (API) ----------
+
+    /**
+     * Entregas de um endpoint do comerciante (inclusive de endpoint removido), mais recentes primeiro.
+     *
+     * @throws WebhookEndpointNotFoundException endpoint inexistente ou de outro comerciante
+     * @throws InvalidDeliveryCursorException   startingAfter não é uma entrega deste endpoint
+     */
+    @Transactional(readOnly = true)
+    public WebhookDeliveryPage list(UUID merchantId, UUID endpointId, WebhookDeliveryListQuery query) {
+        endpointRepository.findByIdAndMerchantId(endpointId, merchantId).orElseThrow(WebhookEndpointNotFoundException::new);
+
+        Specification<WebhookDelivery> spec = WebhookDeliverySpecifications.ofEndpoint(merchantId, endpointId);
+        if (query.startingAfter() != null) {
+            WebhookDelivery cursor = deliveryRepository.findByIdAndMerchantId(query.startingAfter(), merchantId)
+                    .filter(d -> d.getEndpointId().equals(endpointId))
+                    .orElseThrow(InvalidDeliveryCursorException::new);
+            spec = spec.and(WebhookDeliverySpecifications.after(cursor.getCreatedAt(), cursor.getId()));
+        }
+        if (query.status() != null) {
+            spec = spec.and(WebhookDeliverySpecifications.hasStatus(query.status()));
+        }
+
+        int limit = query.limit();
+        List<WebhookDelivery> rows = deliveryRepository.findBy(spec, q -> q
+                .sortBy(WebhookDeliverySpecifications.NEWEST_FIRST)
+                .limit(limit + 1)
+                .all());
+        boolean hasMore = rows.size() > limit;
+        return new WebhookDeliveryPage(hasMore ? rows.subList(0, limit) : rows, hasMore);
+    }
+
+    /**
+     * Reenvio manual: coloca uma entrega FAILED de volta na fila, para agora. O job a envia em até 5 s.
+     *
+     * @throws WebhookDeliveryNotFoundException    entrega inexistente ou de outro comerciante
+     * @throws WebhookDeliveryNotFailedException   a entrega não está FAILED (pendente, entregue ou cancelada)
+     * @throws WebhookEndpointUnavailableException o endpoint foi removido ou está desativado
+     */
+    @Transactional
+    public WebhookDelivery retry(UUID merchantId, UUID deliveryId) {
+        WebhookDelivery delivery = deliveryRepository.lockByIdAndMerchantId(deliveryId, merchantId)
+                .orElseThrow(WebhookDeliveryNotFoundException::new);
+        if (delivery.getStatus() != WebhookDeliveryStatus.FAILED) {
+            throw new WebhookDeliveryNotFailedException(delivery.getStatus());
+        }
+        WebhookEndpoint endpoint = endpointRepository.findByIdAndMerchantId(delivery.getEndpointId(), merchantId)
+                .orElseThrow();
+        if (!endpoint.isEnabled()) {
+            throw new WebhookEndpointUnavailableException();
+        }
+        delivery.requeue(now());
+        return delivery;
     }
 
     private Instant now() {
