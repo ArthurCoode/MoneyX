@@ -1,5 +1,6 @@
 package com.moneyx.payment.service;
 
+import com.moneyx.event.domain.EventType;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
@@ -30,15 +31,18 @@ public class PaymentMaintenanceService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentIdempotencyKeyRepository idempotencyKeyRepository;
+    private final PaymentEventRecorder events;
     private final TransactionTemplate transaction;
     private final Clock clock;
 
     public PaymentMaintenanceService(PaymentRepository paymentRepository,
                                      PaymentIdempotencyKeyRepository idempotencyKeyRepository,
+                                     PaymentEventRecorder events,
                                      PlatformTransactionManager transactionManager,
                                      Clock clock) {
         this.paymentRepository = paymentRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
+        this.events = events;
         this.transaction = new TransactionTemplate(transactionManager);
         this.clock = clock;
     }
@@ -66,7 +70,10 @@ public class PaymentMaintenanceService {
         List<Payment> overdue = paymentRepository.lockOverduePending(now, EXPIRATION_BATCH_SIZE);
         // O domínio confere de novo (só PENDING, só após o prazo). A gravação acontece no commit do lote,
         // pelo dirty checking do Hibernate, e o @Version ainda protege contra qualquer alteração concorrente.
-        overdue.forEach(payment -> payment.expire(now));
+        for (Payment payment : overdue) {
+            payment.expire(now);
+            events.record(EventType.PAYMENT_EXPIRED, payment, now); // mesma transação do lote
+        }
         return overdue.size();
     }
 

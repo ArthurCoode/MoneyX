@@ -2,7 +2,7 @@ package com.moneyx.payment.api;
 
 import com.moneyx.payment.api.dto.CreatePaymentRequest;
 import com.moneyx.payment.api.dto.PaymentListResponse;
-import com.moneyx.payment.api.dto.PaymentResponse;
+import com.moneyx.payment.service.PaymentView;
 import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.service.PaymentCreation;
 import com.moneyx.payment.service.PaymentListQuery;
@@ -45,7 +45,7 @@ public class PaymentController {
      * chave e o mesmo corpo devolve o pagamento original, com o header Idempotent-Replayed: true.
      */
     @PostMapping
-    public ResponseEntity<PaymentResponse> create(
+    public ResponseEntity<PaymentView> create(
             @AuthenticationPrincipal AuthenticatedMerchant principal,
             @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey,
             @Valid @RequestBody CreatePaymentRequest request) {
@@ -60,13 +60,13 @@ public class PaymentController {
 
         return ResponseEntity.created(location)
                 .header(IDEMPOTENT_REPLAYED_HEADER, Boolean.toString(creation.replayed()))
-                .body(PaymentResponse.from(creation.payment()));
+                .body(PaymentView.from(creation.payment()));
     }
 
     /** Consulta um pagamento. 404 se não existir ou for de outro comerciante. */
     @GetMapping("/{id}")
-    public PaymentResponse get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
-        return PaymentResponse.from(service.get(principal.merchantId(), id));
+    public PaymentView get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
+        return PaymentView.from(service.get(principal.merchantId(), id));
     }
 
     /**
@@ -92,7 +92,7 @@ public class PaymentController {
      * apenas muda de estado. Idempotente: cancelar de novo um pagamento CANCELED responde 200.
      */
     @PostMapping("/{id}/cancel")
-    public PaymentResponse cancel(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
-        return PaymentResponse.from(service.cancel(principal.merchantId(), id));
+    public PaymentView cancel(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
+        return PaymentView.from(service.cancel(principal.merchantId(), id));
     }
 }

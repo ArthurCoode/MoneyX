@@ -1,6 +1,6 @@
 package com.moneyx.payment.api;
 
-import com.moneyx.payment.api.dto.PaymentResponse;
+import com.moneyx.payment.service.PaymentView;
 import com.moneyx.payment.service.PaymentService;
 import com.moneyx.security.AuthenticatedMerchant;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -29,7 +29,7 @@ public class PaymentSandboxController {
 
     /** Simula o pagador pagando o Pix. 200 com o pagamento já PAID. */
     @PostMapping("/{id}/pay")
-    public PaymentResponse pay(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
-        return PaymentResponse.from(service.simulatePixPayment(principal.merchantId(), id));
+    public PaymentView pay(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
+        return PaymentView.from(service.simulatePixPayment(principal.merchantId(), id));
     }
 }

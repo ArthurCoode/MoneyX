@@ -80,6 +80,7 @@ class SecurityIsolationIntegrationTest {
     void cleanUp() {
         for (UUID merchantId : createdMerchants) {
             // Ordem respeita as FKs: idempotência -> pagamentos -> chaves -> comerciante.
+            jdbc.update("DELETE FROM events WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM payment_idempotency_keys WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM payments WHERE merchant_id = ?", merchantId);
             apiKeyRepository.deleteAll(apiKeyRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId));
@@ -285,6 +286,52 @@ class SecurityIsolationIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELED"));
+    }
+
+    @Test
+    void merchantSeesOnlyItsOwnEvents() throws Exception {
+        String paymentOfA = createPayment(merchantA, "key-" + UUID.randomUUID(), 4990);
+        String paymentOfB = createPayment(merchantB, "key-" + UUID.randomUUID(), 15000);
+
+        String eventsOfB = mockMvc.perform(get("/v1/events").header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].type").value("payment.created"))
+                .andExpect(jsonPath("$.data[0].data.id").value(paymentOfB))
+                .andReturn().getResponse().getContentAsString();
+        String eventOfB = JsonPath.read(eventsOfB, "$.data[0].id");
+
+        mockMvc.perform(get("/v1/events").header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].data.id").value(paymentOfA));
+
+        // A não lê o evento de B pelo id nem o usa como cursor.
+        mockMvc.perform(get("/v1/events/{id}", eventOfB).header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Event not found"));
+        mockMvc.perform(get("/v1/events")
+                        .param("startingAfter", eventOfB)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid_starting_after"));
+    }
+
+    /** Ciclo completo pela API: criar → pagar gera payment.created e payment.paid, com o retrato de cada momento. */
+    @Test
+    void paymentLifecycleIsVisibleAsEvents() throws Exception {
+        String payment = createPayment(merchantA, "key-" + UUID.randomUUID(), 4990);
+        mockMvc.perform(post("/v1/sandbox/payments/{id}/pay", payment).header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/v1/events").param("type", "payment.paid").header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].data.id").value(payment))
+                .andExpect(jsonPath("$.data[0].data.status").value("PAID"));
+        mockMvc.perform(get("/v1/events").param("type", "payment.created").header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].data.status").value("PENDING"));
     }
 
     private String createPayment(Registered merchant, String idempotencyKey, long amount) throws Exception {
