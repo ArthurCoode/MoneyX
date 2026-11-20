@@ -172,6 +172,7 @@ MoneyX/
 │   │   │   ├── docs/                      ← OpenApiConfig + textos do guia (contrato OpenAPI)
 │   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
+│   │   │       ├── observability/         ← id de correlação (RequestIdFilter, RequestIds, RequestIdErrorAttributes)
 │   │   │       ├── api/                   ← GlobalExceptionHandler (Problem Details)
 │   │   │       ├── config/                ← ClockConfig
 │   │   │       └── crypto/                ← SecretCipher (AES-256-GCM) e CryptoConfig
@@ -219,7 +220,8 @@ api  →  service  →  repository  →  domain
 ### Segurança (Spring Security)
 
 - `security/SecurityConfig` define a única `SecurityFilterChain`: stateless, CSRF/httpBasic/formLogin/logout
-  desabilitados. Rotas públicas: `POST /v1/merchants`, `GET /actuator/health` e o despacho interno `ERROR`.
+  desabilitados. Rotas públicas: `POST /v1/merchants`, a documentação (`/v3/api-docs`, `/swagger-ui`), `GET /actuator/**` (que só
+  existe na porta de gerenciamento 8081, em 127.0.0.1) e o despacho interno `ERROR`.
   Todo o resto exige a autoridade `ACTIVE_MERCHANT`.
 - `security/ApiKeyAuthenticationFilter` (não é `@Component`, é instanciado no `SecurityConfig`):
   sem header → segue anônimo (rota protegida → 401); header inválido → 401 imediato, mesmo em rota pública;
@@ -260,6 +262,27 @@ api  →  service  →  repository  →  domain
   para não depender da ordem de exibição). Mudança intencional:
   `.\mvnw.cmd test -Dtest=OpenApiContractTest -Dopenapi.update=true` e revisar o diff no commit. Toda mudança de DTO,
   validação ou rota exige regenerar o arquivo.
+
+### Observabilidade (definido em 2026-11-20)
+
+- **Id de correlação:** `shared/observability/RequestIdFilter` (`@Order(HIGHEST_PRECEDENCE)`, antes da segurança) aceita o
+  `X-Request-Id` do cliente se casar com `^[A-Za-z0-9._-]{1,64}$` (contra log injection); senão gera UUID. Vai para o MDC
+  (`requestId`), para um atributo da requisição e para o header da resposta; o MDC é SEMPRE limpo no `finally`.
+  Exceção não tratada é logada no filtro (ainda com o id). `ProblemDetailRequestIdAdvice` (ResponseBodyAdvice) põe
+  `requestId` em TODO Problem Details (inclusive 401/403/429 dos filtros); `RequestIdErrorAttributes` no `/error` (500).
+  Jobs: `RequestIds.runWithNewId("job", ...)` por execução.
+- **Logs:** texto com `[requestId]` em cada linha (`logging.pattern.correlation`); JSON ECS em produção com
+  `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` (o `requestId` vira campo). Logs de negócio só com ids:
+  `merchant.registered`, `api_key.created/revoked`, `webhook_endpoint.created/deleted/enabled`, `payment.*` (via
+  `PaymentObservability`). **Nunca** API Key, `whsec_`, documento, e-mail (guardado por `ObservabilityIntegrationTest`).
+- **Métricas (Micrometer):** `moneyx.payments.events{type}` contado em `@TransactionalEventListener(AFTER_COMMIT)`
+  (o oposto do Outbox: só o confirmado conta; testado com commit que falha na FK DEFERRABLE);
+  `moneyx.webhook.deliveries{result,error}` e `moneyx.webhook.delivery.duration{outcome}` (a tentativa conta mesmo se o
+  commit falhar: ela aconteceu); `moneyx.rate_limit.rejections{route}`. Etiquetas só com conjuntos pequenos e fechados:
+  **nunca ids** (explosão de cardinalidade).
+- **Exposição:** `management.server.port=8081`, `management.server.address=127.0.0.1`, endpoints `health,metrics,prometheus`
+  (`micrometer-registry-prometheus`, runtime). Na 8080 o Actuator não existe. Nos testes a exportação de métricas é
+  desligada pelo Boot; `ManagementPortIntegrationTest` usa `@AutoConfigureMetrics` + `RANDOM_PORT` + `management.server.port=0`.
 
 ### Rate limiting do cadastro público (definido em 2026-11-20)
 
@@ -478,13 +501,14 @@ e só precisam de `POSTGRES_PASSWORD`.
 ### Endereços locais
 
 - Aplicação: http://localhost:8080
-- Healthcheck: http://localhost:8080/actuator/health
+- Healthcheck: http://127.0.0.1:8081/actuator/health (porta de GERENCIAMENTO, só local; na 8080 é 404)
+- Métricas: http://127.0.0.1:8081/actuator/prometheus e /actuator/metrics
 - PostgreSQL: localhost:5432
 
 ### Healthcheck HTTP
 
 ```powershell
-Invoke-RestMethod http://localhost:8080/actuator/health
+Invoke-RestMethod http://127.0.0.1:8081/actuator/health
 ```
 
 Resultado esperado:
@@ -893,7 +917,8 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Documentar API (OpenAPI 3.1 + Swagger UI + teste de contrato).
 - [ ] Criar Docker Compose completo.
 - [x] Criar pipeline CI (GitHub Actions) e isolar o banco dos testes (Testcontainers).
-- [ ] Revisar segurança e observabilidade.
+- [x] Observabilidade (id de correlação, logs estruturados, métricas de negócio, porta de gerenciamento).
+- [ ] Revisar segurança (Compose completo, actions por hash, Dependabot, headers HTTP).
 
 ### Fase 7 — Evolução
 
