@@ -2,10 +2,15 @@ package com.moneyx.security;
 
 import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.merchant.service.MerchantService;
+import com.moneyx.security.ratelimit.SignupRateLimitFilter;
+import com.moneyx.security.ratelimit.SignupRateLimitProperties;
+import com.moneyx.security.ratelimit.TokenBucketRateLimiter;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -21,6 +26,7 @@ import org.springframework.security.web.authentication.AnonymousAuthenticationFi
 import org.springframework.web.servlet.HandlerExceptionResolver;
 
 import java.io.IOException;
+import java.time.Clock;
 
 /**
  * Configuração da cadeia de segurança (SecurityFilterChain) da API.
@@ -38,16 +44,28 @@ import java.io.IOException;
  */
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(SignupRateLimitProperties.class)
 public class SecurityConfig {
 
     /** Autoridade concedida apenas a comerciantes ACTIVE. */
     public static final String ACTIVE_MERCHANT = "ACTIVE_MERCHANT";
+
+    /**
+     * Limitador do cadastro público. Usa o Clock da aplicação quando existe (testes podem controlá-lo); nos testes
+     * de fatia web (@WebMvcTest), em que o ClockConfig não é carregado, usa o relógio do sistema.
+     */
+    @Bean
+    public TokenBucketRateLimiter signupRateLimiter(SignupRateLimitProperties properties, ObjectProvider<Clock> clock) {
+        return new TokenBucketRateLimiter(properties.capacity(), properties.refillPeriod(), properties.maxKeys(),
+                clock.getIfAvailable(Clock::systemUTC));
+    }
 
     @Bean
     public SecurityFilterChain apiSecurityFilterChain(
             HttpSecurity http,
             ApiKeyService apiKeyService,
             MerchantService merchantService,
+            TokenBucketRateLimiter signupRateLimiter,
             // Existem vários HandlerExceptionResolver no contexto; este é o principal do Spring MVC.
             @Qualifier("handlerExceptionResolver") HandlerExceptionResolver exceptionResolver) throws Exception {
 
@@ -75,6 +93,11 @@ public class SecurityConfig {
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
+                // Limite do cadastro público: é o PRIMEIRO dos nossos filtros (mesma posição, registrado antes),
+                // para recusar o abuso o mais cedo e barato possível.
+                .addFilterBefore(
+                        new SignupRateLimitFilter(signupRateLimiter, exceptionResolver),
+                        AnonymousAuthenticationFilter.class)
                 // Nosso filtro roda antes do filtro "anônimo": se a chave for válida,
                 // a requisição já chega autenticada às regras de autorização.
                 .addFilterBefore(
