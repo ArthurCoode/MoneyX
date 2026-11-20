@@ -226,8 +226,12 @@ api  →  service  →  repository  →  domain
 ### Convenções da API (padrão de gateways: Stripe, Mercado Pago)
 
 - Listas são devolvidas em envelope `{"data": [...]}`, nunca como array solto (permite paginação futura).
-- Erros de regra de negócio (409) incluem a propriedade `code` (snake_case, estável, para máquinas).
-  Atuais: `api_key_limit_reached`, `last_active_api_key`. O `detail` é para humanos e pode mudar.
+- Listas paginadas usam cursor: `?limit=&startingAfter=<id>` e resposta `{"data": [...], "hasMore": bool}`.
+- Erros de regra de negócio incluem a propriedade `code` (snake_case, estável, para máquinas).
+  Atuais: `api_key_limit_reached`, `last_active_api_key`, `invalid_idempotency_key`, `idempotency_key_reused`,
+  `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`. O `detail` é para humanos e pode mudar.
+- Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
+  quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
 - Recurso de outro comerciante → `404` com a mesma mensagem de recurso inexistente.
   Buscar sempre por `id` E `merchantId` na mesma consulta (ex.: `findByIdAndMerchantId`).
@@ -623,9 +627,29 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - Toda mudança de estado de pagamento usa `PaymentRepository.lockByIdAndMerchantId` (lock pessimista).
   O `@Version` é a segunda camada; `ObjectOptimisticLockingFailureException` vira 409 `concurrent_update`.
   Comprovado por mutação: sem o lock, o `@Version` ainda impede pagamento duplo, mas os concorrentes recebiam 500.
-- [ ] Implementar consulta.
-- [ ] Implementar cancelamento.
-- [ ] Criar testes de transição de estado.
+- [x] Implementar consulta.
+- [x] Implementar cancelamento.
+- [x] Criar testes de transição de estado.
+- [ ] Jobs agendados: expirar PENDING vencidos e apagar chaves de idempotência vencidas.
+
+#### Consulta e cancelamento (definido em 2026-11-20)
+
+- `GET /v1/payments/{id}` → 200; 404 se não existir ou for de outro comerciante.
+- `GET /v1/payments` → `{"data": [...], "hasMore": bool}`, mais recentes primeiro. **Paginação por cursor** (Stripe):
+  `?limit=` (1–100, padrão 10) e `?startingAfter=<id do último item da página anterior>`. Filtros opcionais
+  `status` e `externalReference` (comparado sem espaços nas pontas). `limit` fora da faixa → 400;
+  `startingAfter` que não é pagamento do comerciante → 400 `invalid_starting_after`.
+  Por que cursor e não offset: pagamentos novos não deslocam as páginas seguintes (nada pula nem repete).
+- Ordenação `created_at DESC, id DESC` (`PaymentSpecifications.NEWEST_FIRST`). O desempate por `id` é obrigatório,
+  e o cursor usa a MESMA ordem: `created_at < c OR (created_at = c AND id < c.id)`. A ordem de UUID é a do PostgreSQL
+  (diferente do `UUID.compareTo` do Java): testes comparam com `ORDER BY` do banco, nunca com ordenação em Java.
+- A listagem busca `limit + 1` linhas para calcular `hasMore`, sem `COUNT(*)`.
+- Filtros opcionais via `Specification` (`PaymentRepository extends JpaSpecificationExecutor`) e `findBy(spec, q -> q.sortBy(...).limit(n).all())`.
+  O cursor é buscado por `id` E `merchantId`.
+- `POST /v1/payments/{id}/cancel` (ação explícita; não `DELETE`, o pagamento continua existindo) → 200 CANCELED.
+  Já CANCELED → **200 idempotente** (mantém o `canceledAt` original). PAID/EXPIRED → 409 `payment_not_pending`
+  (com `paymentStatus`). PENDING com prazo vencido → 409 `payment_expired`. Usa o lock pessimista.
+- Comprovado por mutação (6 bugs plantados, todos detectados) e por HTTP real com pagar × cancelar simultâneos.
 
 ### Fase 5 — Eventos e webhooks
 
