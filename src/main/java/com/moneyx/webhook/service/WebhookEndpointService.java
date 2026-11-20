@@ -9,6 +9,7 @@ import com.moneyx.webhook.domain.WebhookSecretGenerator;
 import com.moneyx.webhook.domain.WebhookSecretGenerator.GeneratedSecret;
 import com.moneyx.webhook.domain.WebhookUrlValidator;
 import com.moneyx.webhook.exception.InvalidWebhookUrlException;
+import com.moneyx.webhook.exception.WebhookEndpointDeletedException;
 import com.moneyx.webhook.exception.WebhookEndpointLimitExceededException;
 import com.moneyx.webhook.exception.WebhookEndpointNotFoundException;
 import com.moneyx.webhook.repository.WebhookEndpointHistoryRepository;
@@ -122,6 +123,35 @@ public class WebhookEndpointService {
         if (endpoint.delete(now)) {
             recordHistory(endpoint, WebhookEndpointAction.DELETED, apiKeyId, now);
         }
+    }
+
+    /**
+     * Reativa um endpoint desativado automaticamente. Idempotente: reativar um endpoint ativo responde normalmente,
+     * sem gravar outro registro na linha do tempo. Eventos do período desativado NÃO são reenviados: a loja os
+     * recupera por GET /v1/events (mesmo comportamento do Stripe).
+     *
+     * @throws WebhookEndpointNotFoundException endpoint inexistente ou de outro comerciante
+     * @throws WebhookEndpointDeletedException  endpoint removido (remoção é definitiva)
+     */
+    @Transactional
+    public WebhookEndpoint enable(UUID merchantId, UUID apiKeyId, UUID endpointId) {
+        WebhookEndpoint endpoint = repository.lockByIdAndMerchantId(endpointId, merchantId)
+                .orElseThrow(WebhookEndpointNotFoundException::new);
+        if (!endpoint.isActive()) {
+            throw new WebhookEndpointDeletedException();
+        }
+        if (endpoint.enable()) {
+            recordHistory(endpoint, WebhookEndpointAction.ENABLED, apiKeyId, now());
+        }
+        return endpoint;
+    }
+
+    /**
+     * Desativação AUTOMÁTICA (pelo sistema, sem API Key), chamada pela entrega quando o endpoint já falha há
+     * WebhookEndpoint.AUTO_DISABLE_AFTER. Deve rodar dentro da transação de quem chama, com o endpoint trancado.
+     */
+    void recordAutomaticDisable(WebhookEndpoint endpoint, Instant now) {
+        recordHistory(endpoint, WebhookEndpointAction.DISABLED, null, now);
     }
 
     /**

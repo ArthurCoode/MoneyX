@@ -3,10 +3,14 @@ package com.moneyx.webhook.api;
 import com.moneyx.security.AuthenticatedMerchant;
 import com.moneyx.webhook.api.dto.CreateWebhookEndpointRequest;
 import com.moneyx.webhook.api.dto.CreatedWebhookEndpointResponse;
+import com.moneyx.webhook.api.dto.WebhookDeliveryListResponse;
 import com.moneyx.webhook.api.dto.WebhookEndpointHistoryResponse;
 import com.moneyx.webhook.api.dto.WebhookEndpointListResponse;
 import com.moneyx.webhook.api.dto.WebhookEndpointResponse;
+import com.moneyx.webhook.domain.WebhookDeliveryStatus;
 import com.moneyx.webhook.service.CreatedWebhookEndpoint;
+import com.moneyx.webhook.service.WebhookDeliveryListQuery;
+import com.moneyx.webhook.service.WebhookDeliveryService;
 import com.moneyx.webhook.service.WebhookEndpointService;
 import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
@@ -18,10 +22,12 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
+import java.util.Locale;
 import java.util.UUID;
 
 @RestController
@@ -29,9 +35,11 @@ import java.util.UUID;
 public class WebhookEndpointController {
 
     private final WebhookEndpointService service;
+    private final WebhookDeliveryService deliveryService;
 
-    public WebhookEndpointController(WebhookEndpointService service) {
+    public WebhookEndpointController(WebhookEndpointService service, WebhookDeliveryService deliveryService) {
         this.service = service;
+        this.deliveryService = deliveryService;
     }
 
     /** 201 com o segredo de assinatura (única vez), Cache-Control: no-store. */
@@ -68,6 +76,32 @@ public class WebhookEndpointController {
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         service.delete(principal.merchantId(), principal.apiKeyId(), id);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Reativa um endpoint desativado por falhas. Idempotente. 409 se o endpoint foi removido. */
+    @PostMapping("/{id}/enable")
+    public WebhookEndpointResponse enable(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
+        return WebhookEndpointResponse.from(service.enable(principal.merchantId(), principal.apiKeyId(), id));
+    }
+
+    /** Entregas do endpoint, mais recentes primeiro: ?limit=10&startingAfter=<id>&status=failed */
+    @GetMapping("/{id}/deliveries")
+    public WebhookDeliveryListResponse deliveries(@AuthenticationPrincipal AuthenticatedMerchant principal,
+                                                  @PathVariable UUID id,
+                                                  @RequestParam(required = false) Integer limit,
+                                                  @RequestParam(required = false) UUID startingAfter,
+                                                  @RequestParam(required = false) String status) {
+        WebhookDeliveryStatus deliveryStatus = status == null || status.isBlank() ? null : parseStatus(status);
+        WebhookDeliveryListQuery query = new WebhookDeliveryListQuery(limit, startingAfter, deliveryStatus);
+        return WebhookDeliveryListResponse.from(deliveryService.list(principal.merchantId(), id, query));
+    }
+
+    private static WebhookDeliveryStatus parseStatus(String value) {
+        try {
+            return WebhookDeliveryStatus.valueOf(value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown delivery status: " + value);
+        }
     }
 
     /** Linha do tempo do endpoint (também de endpoints já removidos). */

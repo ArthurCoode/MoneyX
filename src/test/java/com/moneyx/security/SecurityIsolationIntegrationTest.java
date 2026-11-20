@@ -353,6 +353,45 @@ class SecurityIsolationIntegrationTest {
                 .andExpect(jsonPath("$.data[0].apiKeyId").value(merchantA.keyId().toString()));
     }
 
+    @Test
+    void merchantCannotListOrRetryAnotherMerchantsDeliveriesNorEnableTheirEndpoint() throws Exception {
+        String body = mockMvc.perform(post("/v1/webhook-endpoints")
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"url": "https://loja-a.com/hooks"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String endpointOfA = JsonPath.read(body, "$.id");
+        createPayment(merchantA, "key-" + UUID.randomUUID(), 4990); // gera uma entrega pendente para A
+
+        String deliveries = mockMvc.perform(get("/v1/webhook-endpoints/{id}/deliveries", endpointOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andReturn().getResponse().getContentAsString();
+        String deliveryOfA = JsonPath.read(deliveries, "$.data[0].id");
+
+        mockMvc.perform(get("/v1/webhook-endpoints/{id}/deliveries", endpointOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Webhook endpoint not found"));
+        mockMvc.perform(post("/v1/webhook-endpoints/{id}/enable", endpointOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/v1/webhook-deliveries/{id}/retry", deliveryOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.detail").value("Webhook delivery not found"));
+
+        // Para o dono, a mesma entrega existe (está pendente, por isso o reenvio manual é recusado com 409).
+        mockMvc.perform(post("/v1/webhook-deliveries/{id}/retry", deliveryOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("delivery_not_failed"));
+    }
+
     /** Ciclo completo pela API: criar → pagar gera payment.created e payment.paid, com o retrato de cada momento. */
     @Test
     void paymentLifecycleIsVisibleAsEvents() throws Exception {

@@ -55,6 +55,9 @@ class WebhookEndpointControllerTest {
     private WebhookEndpointService service;
 
     @MockitoBean
+    private com.moneyx.webhook.service.WebhookDeliveryService deliveryService;
+
+    @MockitoBean
     private ApiKeyService apiKeyService;
 
     @MockitoBean
