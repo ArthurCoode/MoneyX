@@ -101,7 +101,7 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 | Testcontainers 2.x | PostgreSQL descartável em Docker para os testes |
 | Mockito | Testes com dependências simuladas |
 | Spring Security | Segurança e autenticação |
-| OpenAPI / Swagger | Documentação da API |
+| springdoc-openapi 3.2.0 (OpenAPI 3.1) | Contrato da API + Swagger UI (`/v3/api-docs`, `/swagger-ui.html`) |
 | GitHub Actions | CI: build + testes a cada push/PR (`.github/workflows/ci.yml`) |
 
 ### Decisões importantes
@@ -169,6 +169,7 @@ MoneyX/
 │   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas + job/ para agendamentos)
 │   │   │   ├── event/                     ← módulo de eventos (histórico + Outbox), genérico
 │   │   │   ├── webhook/                   ← endpoints, linha do tempo, entregas assinadas (+ job/)
+│   │   │   ├── docs/                      ← OpenApiConfig + textos do guia (contrato OpenAPI)
 │   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       ├── api/                   ← GlobalExceptionHandler (Problem Details)
@@ -231,6 +232,28 @@ api  →  service  →  repository  →  domain
 - Controllers obtêm o comerciante com `@AuthenticationPrincipal AuthenticatedMerchant`, nunca pela URL
   (proteção contra IDOR). Ex.: `GET /v1/merchants/me`. Não criar rotas que recebam o `merchantId` do cliente.
 - Endpoints atuais de comerciante: `POST /v1/merchants` (público, `Location: /v1/merchants/me`) e `GET /v1/merchants/me`.
+
+### Documentação da API / contrato OpenAPI (definido em 2026-11-20)
+
+- springdoc-openapi **3.2.0** (construído sobre o Spring Boot 4.1.2; versão fixada em `springdoc.version`, o Boot não a
+  gerencia). Code-first. `springdoc.api-docs.version=openapi_3_1` (necessário para `webhooks`) e
+  `springdoc.writer-with-order-by-keys=true` (saída estável).
+- `/v3/api-docs` e `/swagger-ui.html` são **públicos** (liberados no `SecurityConfig`), como a referência do Stripe.
+  Desligáveis com `springdoc.api-docs.enabled=false` / `springdoc.swagger-ui.enabled=false`.
+- `docs/OpenApiConfig`: info + guia (`DocsText`: autenticação, centavos, idempotência, paginação, erros, limites,
+  webhooks), servidor fixo `http://localhost:8080`, esquema `bearerAuth`, schema `Problem` (RFC 9457 + `code` + `errors`),
+  respostas reutilizáveis (`BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `Conflict`, `UnprocessableContent`,
+  `TooManyRequests`), e um `OpenApiCustomizer` que adiciona 401/403 a toda rota protegida e deixa o cadastro sem
+  segurança + 429. Seção `webhooks` (OpenAPI 3.1) com os 4 eventos, o schema `Event` e o guia de verificação da assinatura.
+- Cada operação tem `@Operation(operationId, summary, description)` e `@ApiResponse` com o status REAL (201/204) e os
+  erros. **O springdoc sozinho errava**: 200 para criações e para o DELETE de webhook, sem erros, `operationId` como
+  `create_1`, tags com nome de classe. Code-first gera a estrutura; status, erros e nomes precisam ser declarados.
+- Campos `@JsonRawValue String` são documentados como objeto com `@Schema(types = {"object"})`: no OpenAPI 3.1 o atributo
+  é `types` (plural); `type` é ignorado.
+- **Teste de contrato** (`docs/OpenApiContractTest`): o `/v3/api-docs` gerado tem de ser idêntico a
+  `src/test/resources/openapi/moneyx-api.json` (comparação com JSON normalizado e fim de linha `\n`). Mudança intencional:
+  `.\mvnw.cmd test -Dtest=OpenApiContractTest -Dopenapi.update=true` e revisar o diff no commit. Toda mudança de DTO,
+  validação ou rota exige regenerar o arquivo.
 
 ### Rate limiting do cadastro público (definido em 2026-11-20)
 
@@ -861,7 +884,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [ ] Avaliar limite acumulado de volume por comerciante (dia/mês) como controle de risco.
 - [ ] Expandir testes automatizados.
 - [ ] Linha do tempo de webhooks: coluna de sequência para ordenação estável (ver limitação na Fase 5).
-- [ ] Documentar API.
+- [x] Documentar API (OpenAPI 3.1 + Swagger UI + teste de contrato).
 - [ ] Criar Docker Compose completo.
 - [x] Criar pipeline CI (GitHub Actions) e isolar o banco dos testes (Testcontainers).
 - [ ] Revisar segurança e observabilidade.
