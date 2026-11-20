@@ -165,7 +165,8 @@ MoneyX/
 │   │   │   │   ├── exception/             ← erros de negócio do módulo
 │   │   │   │   └── api/                   ← controllers, DTOs e tratamento de erros do módulo
 │   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
-│   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas)
+│   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas + job/ para agendamentos)
+│   │   │   ├── event/                     ← módulo de eventos (histórico + Outbox), genérico
 │   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       └── api/                   ← GlobalExceptionHandler (Problem Details)
@@ -202,7 +203,8 @@ api  →  service  →  repository  →  domain
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
 - Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
-  `security → merchant, apikey`. `payment` não importa outros módulos de negócio (referencia o comerciante por `merchantId`). Nenhum módulo de negócio importa `security`, exceto a camada `api`
+  `security → merchant, apikey` e `payment → event`. `payment` referencia o comerciante por `merchantId`.
+  `event` não importa nenhum módulo de negócio: recebe tipo, recurso e retrato prontos. Nenhum módulo de negócio importa `security`, exceto a camada `api`
   para ler o `AuthenticatedMerchant` (via `@AuthenticationPrincipal`).
   `apikey` nunca importa `merchant`; referencia o comerciante apenas por `merchantId` (UUID).
   Entidades de módulos diferentes não usam `@ManyToOne` entre si; a integridade é garantida por FK no banco.
@@ -272,7 +274,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V6. A próxima é `V7__...`.
+- Aplicadas: V1 a V7. A próxima é `V8__...`.
 
 ### Testes
 
@@ -285,6 +287,8 @@ api  →  service  →  repository  →  domain
 | Segurança | `@WebMvcTest` + mocks dos serviços do filtro | `ApiKeyAuthenticationTest` |
 | Ponta a ponta | `@SpringBootTest` + `@AutoConfigureMockMvc`, tudo real (sem `@Transactional`, limpeza explícita) | `SecurityIsolationIntegrationTest` |
 | Concorrência | `@SpringBootTest` + threads com `CountDownLatch` | `ApiKeyConcurrencyIntegrationTest` |
+
+Limpeza em testes não transacionais, na ordem das FKs: `events` → `payment_idempotency_keys` → `payments` → `api_keys` → `merchants`.
 
 Todo recurso novo pertencente a um comerciante deve ganhar cenários no `SecurityIsolationIntegrationTest`
 (A não lê/altera recurso de B → 404 indistinguível de inexistente).
@@ -681,12 +685,32 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 5 — Eventos e webhooks
 
-- [ ] Modelar eventos.
-- [ ] Implementar webhooks.
+- [x] Modelar eventos.
+- [x] Avaliar padrão Outbox (adotado: tabela `events` gravada na transação da mudança de estado).
+- [ ] Cadastro de endpoints de webhook.
+- [ ] Implementar webhooks (entrega a partir do Outbox).
 - [ ] Implementar assinatura.
 - [ ] Implementar tentativas e retentativas.
-- [ ] Avaliar padrão Outbox.
-- [ ] Introduzir RabbitMQ quando necessário.
+- [ ] Introduzir RabbitMQ quando necessário (hoje NÃO é: Outbox + job no PostgreSQL resolve).
+
+#### Eventos (definido em 2026-11-20)
+
+- Tabela `events` (V7): `id`, `merchant_id` (FK), `type` (CHECK), `resource_id` (sem FK: o módulo é genérico),
+  `data JSONB` (CHECK objeto), `created_at`. **Imutável**: colunas `updatable = false`, sem métodos de alteração.
+- Tipos (`EventType`, contrato público, nunca renomear): `payment.created`, `payment.paid`, `payment.canceled`,
+  `payment.expired`. Gravados pelo valor público via `EventTypeConverter`.
+- `data` é o **retrato** do recurso no momento do evento: o `PaymentView` serializado com o MESMO `JsonMapper` da API.
+  `PaymentView` (antes `api/dto/PaymentResponse`) fica em `payment/service` porque é usado pela API e pelos eventos.
+- **Outbox:** `EventService.record` usa `Propagation.MANDATORY`: só grava dentro da transação de quem chama.
+  Mudança de estado e evento são atômicos (testado nos dois sentidos, com falha no evento e com rollback).
+  Pontos de gravação: `PaymentService.create` (só quando cria de fato), `simulatePixPayment`, `cancel` (não no
+  cancelamento repetido) e `PaymentMaintenanceService.expireBatch`. Chamados via `PaymentEventRecorder`.
+- API: `GET /v1/events` (cursor `limit`/`startingAfter`, filtro `type`; `{"data", "hasMore"}`) e `GET /v1/events/{id}`.
+  Envelope `{id, type, createdAt, data}`; `data` sai como objeto (`@JsonRawValue`). Tipo desconhecido → 400.
+- O `JSONB` não preserva a ordem das chaves: em `data` elas aparecem reordenadas em relação a `/v1/payments`
+  (mesmo conteúdo; JSON não garante ordem).
+- O comerciante deve deduplicar pelo `id` do evento: a entrega por webhook será "pelo menos uma vez".
+- Retenção: eventos não são apagados por enquanto (Stripe guarda 30 dias); avaliar na Fase 6.
 
 ### Fase 6 — Qualidade e documentação
 
