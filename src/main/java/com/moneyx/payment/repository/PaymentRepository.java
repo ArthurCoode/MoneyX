@@ -3,13 +3,17 @@ package com.moneyx.payment.repository;
 import com.moneyx.payment.domain.Payment;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.Optional;
 import java.util.UUID;
 
-public interface PaymentRepository extends JpaRepository<Payment, UUID> {
+/**
+ * JpaSpecificationExecutor: permite montar a listagem com filtros opcionais (ver PaymentSpecifications).
+ */
+public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpecificationExecutor<Payment> {
 
     /**
      * Busca por id E dono na mesma consulta (regra de isolamento da Fase 3):
