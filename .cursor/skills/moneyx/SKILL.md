@@ -172,7 +172,9 @@ MoneyX/
 │   │   └── resources/
 │   │       ├── application.properties
 │   │       └── db/migration/              ← migrations Flyway (V1__..., V2__...)
-│   └── test/java/com/moneyx/              ← espelha a estrutura de main
+│   └── test/
+│       ├── java/com/moneyx/               ← espelha a estrutura de main
+│       └── resources/config/application.properties ← propriedades EXTRAS dos testes (ex.: jobs desligados)
 ├── .gitignore
 ├── compose.yaml
 ├── mvnw / mvnw.cmd
@@ -196,6 +198,7 @@ api  →  service  →  repository  →  domain
 - `repository` conhece apenas `domain`.
 - `service` orquestra `domain` e `repository` e lança as exceções do módulo.
 - `api` conhece apenas `service` e seus DTOs; nunca acessa o repositório diretamente.
+- `job` (agendamentos) segue a mesma regra de `api`: é só um ponto de entrada que chama `service`.
 - Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
 - Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
@@ -269,6 +272,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
+- Aplicadas: V1 a V6. A próxima é `V7__...`.
 
 ### Testes
 
@@ -292,6 +296,9 @@ Executar todos os testes (requer o container PostgreSQL ativo e `POSTGRES_PASSWO
 ```powershell
 .\mvnw.cmd test
 ```
+
+Nunca criar `src/test/resources/application.properties` (esconderia o principal); propriedades de teste ficam em
+`src/test/resources/config/application.properties`, que é carregado além do principal.
 
 Os testes de integração utilizam atualmente o banco de desenvolvimento, com rollback ao final de cada teste.
 Avaliar Testcontainers na Fase 6 para isolar o banco de testes.
@@ -630,7 +637,28 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Implementar consulta.
 - [x] Implementar cancelamento.
 - [x] Criar testes de transição de estado.
-- [ ] Jobs agendados: expirar PENDING vencidos e apagar chaves de idempotência vencidas.
+- [x] Jobs agendados: expirar PENDING vencidos e apagar chaves de idempotência vencidas.
+
+**Fase 4 concluída em 2026-11-20.**
+
+#### Jobs agendados (definido em 2026-11-20)
+
+- `payment/job/PaymentMaintenanceJobs` (`@EnableScheduling` + `@ConditionalOnProperty moneyx.jobs.enabled`, padrão `true`)
+  só dispara `payment/service/PaymentMaintenanceService`, onde ficam as regras.
+  - Expiração: `fixedDelay` 1 min, lotes de 100 até esvaziar. PENDING com `expires_at <= now` → EXPIRED
+    (o mesmo limite inclusivo da regra de pagar).
+  - Limpeza: `fixedDelay` 1 h, lotes de 1.000, apaga `payment_idempotency_keys` com `expires_at <= now`.
+- Cada lote é uma transação curta (`TransactionTemplate`; `@Transactional` não funcionaria numa chamada interna da
+  mesma classe). Um único `now` por execução.
+- `SELECT ... FOR UPDATE SKIP LOCKED`: linhas trancadas por pagar/cancelar em andamento são puladas e ficam para a
+  próxima execução. Duas instâncias da aplicação dividem o trabalho sem repetir (testado).
+- Índices da V6: parcial `payments (expires_at) WHERE status = 'PENDING'` e `payment_idempotency_keys (expires_at)`
+  (uso confirmado com `EXPLAIN`).
+- **Limitação conhecida:** se o domínio recusar um pagamento do lote (`expire()` lança exceção), o lote inteiro é desfeito
+  e o job falha nesse ponto a cada execução. Hoje a consulta e o domínio usam exatamente a mesma regra; se divergirem no
+  futuro, avaliar isolar por linha e registrar a falha.
+- Nos testes os jobs ficam desligados (`src/test/resources/config/application.properties`); os testes chamam o serviço
+  com `MutableClock` começando em **2020**, para que o job nunca toque em dados reais do banco de desenvolvimento.
 
 #### Consulta e cancelamento (definido em 2026-11-20)
 
