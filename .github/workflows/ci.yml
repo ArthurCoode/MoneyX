@@ -1,0 +1,48 @@
+# Integração contínua: a cada push na main e a cada pull request, compila e roda TODOS os testes.
+#
+# Os testes usam Testcontainers (PostgreSQL descartável em Docker). Os runners Linux do GitHub já têm Docker,
+# então não há serviço de banco a configurar nem segredo algum neste workflow.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Permissão mínima: o workflow só precisa LER o código.
+permissions:
+  contents: read
+
+# Um push novo no mesmo branch cancela a execução anterior, ainda em andamento.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build e testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar Java 21 (Temurin) com cache do Maven
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Compilar e rodar os testes
+        run: ./mvnw -B -ntp verify
+
+      # Só quando falhar: os relatórios do Surefire ficam disponíveis para download na página da execução.
+      - name: Publicar relatórios dos testes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
