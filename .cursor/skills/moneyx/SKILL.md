@@ -167,7 +167,7 @@ MoneyX/
 │   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
 │   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas + job/ para agendamentos)
 │   │   │   ├── event/                     ← módulo de eventos (histórico + Outbox), genérico
-│   │   │   ├── webhook/                   ← endpoints de webhook + linha do tempo (auditoria)
+│   │   │   ├── webhook/                   ← endpoints, linha do tempo, entregas assinadas (+ job/)
 │   │   │   ├── security/                  ← Spring Security: filtro de API Key, SecurityConfig, erros 401/403
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       ├── api/                   ← GlobalExceptionHandler (Problem Details)
@@ -278,7 +278,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V8. A próxima é `V9__...`.
+- Aplicadas: V1 a V9. A próxima é `V10__...`.
 
 ### Testes
 
@@ -292,13 +292,19 @@ api  →  service  →  repository  →  domain
 | Ponta a ponta | `@SpringBootTest` + `@AutoConfigureMockMvc`, tudo real (sem `@Transactional`, limpeza explícita) | `SecurityIsolationIntegrationTest` |
 | Concorrência | `@SpringBootTest` + threads com `CountDownLatch` | `ApiKeyConcurrencyIntegrationTest` |
 
-Limpeza em testes não transacionais, na ordem das FKs: `webhook_endpoint_history` → `webhook_endpoints` → `events` →
+Limpeza em testes não transacionais, na ordem das FKs: `webhook_deliveries` → `webhook_endpoint_history` → `webhook_endpoints` → `events` →
 `payment_idempotency_keys` → `payments` → `api_keys` → `merchants`.
 
 Todo recurso novo pertencente a um comerciante deve ganhar cenários no `SecurityIsolationIntegrationTest`
 (A não lê/altera recurso de B → 404 indistinguível de inexistente).
 
 Testes de controller autenticados usam `TestAuthentication.activeMerchant(merchantId)` (em `src/test/.../security`).
+
+Testes de integração que precisam de relógio controlado usam `@Import(TestClockConfig.class)` (em `src/test/.../support`)
+e posicionam o relógio no `@BeforeEach`. **Não criar `@TestConfiguration` aninhada por classe**: cada configuração
+diferente vira um contexto em cache com pool próprio (10 conexões) e a suíte já esbarrou no limite de 100 conexões do
+PostgreSQL. `src/test/resources/spring.properties` limita o cache a 5 contextos (`spring.test.context.cache.maxSize`).
+Pico medido depois da mudança: 41 conexões.
 
 Executar todos os testes (requer o container PostgreSQL ativo e `POSTGRES_PASSWORD` definido):
 
@@ -703,8 +709,8 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Modelar eventos.
 - [x] Avaliar padrão Outbox (adotado: tabela `events` gravada na transação da mudança de estado).
 - [x] Cadastro de endpoints de webhook (com linha do tempo de auditoria).
-- [ ] Implementar webhooks (entrega a partir do Outbox).
-- [ ] Implementar assinatura.
+- [x] Implementar webhooks (entrega a partir do Outbox).
+- [x] Implementar assinatura.
 - [ ] Implementar tentativas e retentativas.
 - [ ] Introduzir RabbitMQ quando necessário (hoje NÃO é: Outbox + job no PostgreSQL resolve).
 
@@ -755,6 +761,39 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   alternativas (`2130706433`, `0177.0.0.1`). `moneyx.webhooks.allow-local-urls` (padrão **false**) libera só
   `http(s)://localhost`/loopback para testes locais. **A checagem definitiva é na ENTREGA** (`isInternalAddress` sobre o
   IP resolvido em cada envio), por causa de DNS rebinding.
+
+#### Entrega de webhooks (definido em 2026-11-20)
+
+- **Fan-out no Outbox:** `EventService.record` publica `EventRecorded` (`ApplicationEventPublisher`, padrão Observer);
+  `webhook/service/WebhookFanOut` escuta com `@EventListener` + `Propagation.MANDATORY` e cria uma `WebhookDelivery` por
+  endpoint ATIVO que aceita o tipo, na MESMA transação do pagamento e do evento. UNIQUE `(event_id, endpoint_id)` (V9).
+  Não usar `@TransactionalEventListener(AFTER_COMMIT)` para isso (perderia a atomicidade). `event` continua sem depender de `webhook`.
+- `EventView` (antes `event/api/dto/EventResponse`) fica em `event/service`: é o corpo dos webhooks e a resposta da API.
+- **Reserva com prazo (lease):** `WebhookDeliveryService.deliverDue` (job a cada 5 s, lotes de 10):
+  1) transação curta: `lockDue` (`FOR UPDATE SKIP LOCKED`, só PENDING vencidas sem reserva válida) + `claim()` grava
+  `lease_until` e um `lease_token`; 2) POST **fora de transação**; 3) transação curta: grava o resultado SÓ se o token
+  ainda for o da reserva (resultado atrasado de reserva vencida é descartado). Queda no meio → a reserva vence →
+  reenvio (pelo menos uma vez). `lease` (30 s) precisa ser maior que connect (5 s) + request (10 s) (validado na partida).
+- O `SKIP LOCKED` serve à **vazão**; a garantia de "uma vez por reserva" vem do `lease_until` (provado: a mutação que remove
+  o SKIP LOCKED não quebra nenhum teste de correção, porque o PostgreSQL reavalia o WHERE depois de esperar o lock).
+- **Assinatura** (`webhook/domain/WebhookSignature`): `MoneyX-Signature: t=<epoch s>,v1=<hex HMAC-SHA256(segredo, t + "." + corpo)>`.
+  Também `MoneyX-Event-Id`, `MoneyX-Event-Type`, `User-Agent: MoneyX-Webhooks/1.0`, `Content-Type: application/json`.
+  Corpo = `EventView` (idêntico a `GET /v1/events/{id}`). Validado contra vetor calculado em Python.
+- **Como a loja verifica** (`WebhookSignature.verify` é a implementação de referência): separar `t` e `v1`; recusar se
+  `|agora - t| > 5 min` (replay); recalcular o HMAC sobre os BYTES recebidos (`t + "." + corpo`, sem reformatar o JSON);
+  comparar em tempo constante; deduplicar pelo `id` do evento.
+- **Cliente HTTP** (`WebhookSender`): `HttpClient` do JDK, `followRedirects(NEVER)` (redirecionamento = falha
+  `non_2xx_response`), corpo da resposta descartado (não guardar dados da loja). Sucesso = 2xx.
+- **SSRF na entrega** (`WebhookDestinationGuard`): resolve o DNS a cada envio e recusa se QUALQUER IP for interno
+  (`destination_not_allowed`, sem conectar). Com `allow-local-urls=true`, libera só loopback. **Risco residual documentado:**
+  janela mínima de DNS rebinding entre a checagem e a conexão; solução completa = proxy de saída (Fase 7).
+- Erros gravados como código estável (`WebhookDeliveryError`): `timeout`, `connection_failed`, `destination_not_allowed`,
+  `non_2xx_response`; mais status HTTP e duração. Nesta etapa uma tentativa só: falha → `FAILED`. Endpoint removido →
+  entregas pendentes viram `CANCELED` sem envio.
+- Agendador com 2 threads (`spring.task.scheduling.pool.size=2`): loja lenta não atrasa a expiração de pagamentos.
+- Configuração em `moneyx.webhooks.delivery.*` (`WebhookDeliveryProperties`, `@ConfigurationProperties`).
+- Para testar entrega real localmente: subir a app com `-Dspring-boot.run.arguments=--moneyx.webhooks.allow-local-urls=true`
+  e um receptor HTTP em 127.0.0.1.
 
 ### Fase 6 — Qualidade e documentação
 
