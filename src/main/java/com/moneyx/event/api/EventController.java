@@ -1,7 +1,7 @@
 package com.moneyx.event.api;
 
 import com.moneyx.event.api.dto.EventListResponse;
-import com.moneyx.event.api.dto.EventResponse;
+import com.moneyx.event.service.EventView;
 import com.moneyx.event.domain.EventType;
 import com.moneyx.event.service.EventListQuery;
 import com.moneyx.event.service.EventService;
@@ -32,8 +32,8 @@ public class EventController {
     }
 
     @GetMapping("/{id}")
-    public EventResponse get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
-        return EventResponse.from(service.get(principal.merchantId(), id));
+    public EventView get(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
+        return EventView.from(service.get(principal.merchantId(), id));
     }
 
     /** ?limit=10&startingAfter=<id>&type=payment.paid */
