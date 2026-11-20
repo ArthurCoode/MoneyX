@@ -232,6 +232,22 @@ api  →  service  →  repository  →  domain
   (proteção contra IDOR). Ex.: `GET /v1/merchants/me`. Não criar rotas que recebam o `merchantId` do cliente.
 - Endpoints atuais de comerciante: `POST /v1/merchants` (público, `Location: /v1/merchants/me`) e `GET /v1/merchants/me`.
 
+### Rate limiting do cadastro público (definido em 2026-11-20)
+
+- `security/ratelimit/SignupRateLimitFilter` (instanciado no `SecurityConfig`, antes do filtro de API Key) limita
+  `POST /v1/merchants` por IP com `TokenBucketRateLimiter`: **5 tentativas em rajada, +1 a cada 2 min**
+  (`moneyx.rate-limit.signup.*`; nos testes `capacity=1000000`, e os testes do próprio limite usam valores pequenos).
+- **Toda tentativa conta**, inclusive 400/409 (o 409 é o que permite enumerar clientes); a recusa acontece antes do controller.
+- Recusa: **429** Problem Details `code: rate_limit_exceeded` + `Retry-After` em segundos **arredondado para cima**.
+- Chave = `ClientKey.of(request.getRemoteAddr())`: IPv4 como está; **IPv6 agrupado por /64**; `::ffff:a.b.c.d` = IPv4.
+  **`X-Forwarded-For` é ignorado** (o cliente pode forjar). Atrás de proxy (Fase 7): configurar proxies confiáveis.
+- Crédito do balde em **nanossegundos inteiros (`long`)**, nunca `double`: com ponto flutuante, frações acumuladas
+  atrasavam a ficha e o `Retry-After` mentia (bug encontrado pelo teste de taxa sustentada). Mesmo princípio do dinheiro em centavos.
+- `ConcurrentHashMap.compute` (atômico por chave): 50 tentativas simultâneas → exatamente 5 aceitas.
+- Memória: teto de 100 mil chaves; ao atingir, remove baldes cheios (equivalentes a inexistentes); se continuar cheio,
+  **nega novas chaves (fail-closed)** e loga alerta.
+- Em memória = **uma instância**. Com várias, o limite se multiplicaria: mover o estado para Redis.
+
 ### Convenções da API (padrão de gateways: Stripe, Mercado Pago)
 
 - Listas são devolvidas em envelope `{"data": [...]}`, nunca como array solto (permite paginação futura).
@@ -240,7 +256,7 @@ api  →  service  →  repository  →  domain
   Atuais: `api_key_limit_reached`, `last_active_api_key`, `invalid_idempotency_key`, `idempotency_key_reused`,
   `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`,
   `webhook_endpoint_limit_reached`, `invalid_webhook_url`, `webhook_endpoint_deleted`, `webhook_endpoint_unavailable`,
-  `delivery_not_failed`. O `detail` é para humanos e pode mudar.
+  `delivery_not_failed`, `rate_limit_exceeded`. O `detail` é para humanos e pode mudar.
 - Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
   quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
@@ -598,7 +614,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - Enumeração: o `409` do cadastro público revela se documento/e-mail já existem.
 - Abuso: criação em massa de contas.
 - Mitigação: cadastro público gera apenas chaves de teste (`mx_test_`), sem movimentação real.
-  Rate limiting no cadastro previsto para a Fase 6. Chaves `mx_live_` exigirão verificação (e-mail/KYC) na Fase 7.
+  Rate limiting no cadastro implementado na Fase 6 (5 por IP + 1 a cada 2 min). Chaves `mx_live_` exigirão verificação (e-mail/KYC) na Fase 7.
 
 #### Etapas
 
@@ -841,7 +857,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 6 — Qualidade e documentação
 
-- [ ] Rate limiting no cadastro público de comerciantes (avaliar Redis).
+- [x] Rate limiting no cadastro público de comerciantes (em memória; Redis só com mais de uma instância).
 - [ ] Avaliar limite acumulado de volume por comerciante (dia/mês) como controle de risco.
 - [ ] Expandir testes automatizados.
 - [ ] Linha do tempo de webhooks: coluna de sequência para ordenação estável (ver limitação na Fase 5).
