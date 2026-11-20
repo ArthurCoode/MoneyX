@@ -238,7 +238,8 @@ api  →  service  →  repository  →  domain
 - Erros de regra de negócio incluem a propriedade `code` (snake_case, estável, para máquinas).
   Atuais: `api_key_limit_reached`, `last_active_api_key`, `invalid_idempotency_key`, `idempotency_key_reused`,
   `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`,
-  `webhook_endpoint_limit_reached`, `invalid_webhook_url`. O `detail` é para humanos e pode mudar.
+  `webhook_endpoint_limit_reached`, `invalid_webhook_url`, `webhook_endpoint_deleted`, `webhook_endpoint_unavailable`,
+  `delivery_not_failed`. O `detail` é para humanos e pode mudar.
 - Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
   quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
@@ -278,7 +279,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V9. A próxima é `V10__...`.
+- Aplicadas: V1 a V10. A próxima é `V11__...`.
 
 ### Testes
 
@@ -711,8 +712,11 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Cadastro de endpoints de webhook (com linha do tempo de auditoria).
 - [x] Implementar webhooks (entrega a partir do Outbox).
 - [x] Implementar assinatura.
-- [ ] Implementar tentativas e retentativas.
-- [ ] Introduzir RabbitMQ quando necessário (hoje NÃO é: Outbox + job no PostgreSQL resolve).
+- [x] Implementar tentativas e retentativas (backoff exponencial com jitter, desativação automática, reenvio manual).
+- [x] Avaliar RabbitMQ: **não introduzido**. Outbox + jobs no PostgreSQL (SKIP LOCKED + lease) atendem a v1; reavaliar
+  só com volume que o banco não suporte (e mesmo assim o Outbox continua necessário).
+
+**Fase 5 concluída em 2026-11-20.**
 
 #### Eventos (definido em 2026-11-20)
 
@@ -795,11 +799,38 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - Para testar entrega real localmente: subir a app com `-Dspring-boot.run.arguments=--moneyx.webhooks.allow-local-urls=true`
   e um receptor HTTP em 127.0.0.1.
 
+#### Retentativas, desativação automática e reenvio (definido em 2026-11-20)
+
+- `webhook/domain/WebhookRetryPolicy` (pura): **9 tentativas** (1 imediata + 8), esperas 1 min, 5 min, 30 min, 2 h, 5 h,
+  10 h, 24 h, 24 h (~2,7 dias). Jitter de ±10% (`moneyx.webhooks.delivery.retry-jitter`, 0 nos testes) contra
+  "thundering herd". Todas as falhas reagendam, EXCETO `destination_not_allowed` (decisão de segurança → FAILED na hora).
+- Enquanto há tentativas, a entrega continua `PENDING` com `next_attempt_at` no futuro; esgotadas → `FAILED`.
+- Desativação automática: `webhook_endpoints.failing_since` marca o início da sequência atual de falhas (zerada a cada
+  sucesso). Falha com `failing_since` há **3 dias** ou mais (`WebhookEndpoint.AUTO_DISABLE_AFTER`) → `disabled_at` + linha
+  do tempo `DISABLED` **sem API Key** (ação do sistema; CHECK `(action = 'DISABLED') = (api_key_id IS NULL)`).
+  Desativado: não recebe novas entregas (fan-out usa `isEnabled()`), pendentes viram `CANCELED` ao vencer, continua contando
+  no limite de 5. `isActive()` = não removido; `isEnabled()` = não removido e não desativado.
+- Ao gravar o resultado, o ENDPOINT é trancado (`lockByIdAndMerchantId`) na mesma transação curta: entregas do mesmo
+  endpoint terminando juntas atualizam `failing_since` uma de cada vez (provado: sem o lock, o `@Version` falha).
+- `POST /v1/webhook-endpoints/{id}/enable` → 200, idempotente, linha do tempo `ENABLED` com a API Key; removido → 409
+  `webhook_endpoint_deleted`. Eventos do período desativado não são reenviados (a loja usa `GET /v1/events`). Retentativas
+  que ainda estavam pendentes voltam a ser enviadas normalmente.
+- `GET /v1/webhook-endpoints/{id}/deliveries` (cursor `limit`/`startingAfter`, filtro `status` em minúsculas) →
+  `{id, endpointId, eventId, status, attempts, nextAttemptAt (só se pendente), lastAttemptAt, lastStatusCode, lastError,
+  lastDurationMs, deliveredAt, createdAt}`. Inclui endpoints removidos. Nunca o corpo nem a resposta da loja.
+- `POST /v1/webhook-deliveries/{id}/retry` → só `FAILED` (senão 409 `delivery_not_failed` com `deliveryStatus`); endpoint
+  removido/desativado → 409 `webhook_endpoint_unavailable`. Volta para a fila para agora; as tentativas continuam contando
+  (agenda esgotada + nova falha → FAILED de novo).
+- **Limitação conhecida (linha do tempo):** a ordem usa `occurred_at, id`. Duas ações no MESMO microssegundo seriam
+  ordenadas pelo id (aleatório). Na prática não acontece (ações vêm de requisições/jobs distintos e a reativação lê a
+  desativação já gravada), mas o desempate ideal é uma coluna de sequência (`GENERATED ALWAYS AS IDENTITY`): avaliar na Fase 6.
+
 ### Fase 6 — Qualidade e documentação
 
 - [ ] Rate limiting no cadastro público de comerciantes (avaliar Redis).
 - [ ] Avaliar limite acumulado de volume por comerciante (dia/mês) como controle de risco.
 - [ ] Expandir testes automatizados.
+- [ ] Linha do tempo de webhooks: coluna de sequência para ordenação estável (ver limitação na Fase 5).
 - [ ] Documentar API.
 - [ ] Criar Docker Compose completo.
 - [ ] Criar pipeline CI.
