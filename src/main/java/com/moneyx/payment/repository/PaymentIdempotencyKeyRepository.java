@@ -51,19 +51,25 @@ public interface PaymentIdempotencyKeyRepository extends JpaRepository<PaymentId
      * Limpeza: apaga até {@code limit} chaves vencidas e devolve quantas apagou.
      *
      * Apagar uma chave vencida não muda o comportamento da API: o reserve() já trata chave vencida como livre.
-     * SKIP LOCKED na subconsulta: uma chave que o reserve() está renovando agora é pulada (não é apagada nem
-     * esperada). Se o DELETE trancar primeiro, o INSERT ... ON CONFLICT do reserve() espera e, quando a linha
-     * some, simplesmente insere uma nova.
+     * SKIP LOCKED: uma chave que o reserve() está renovando agora é pulada (não é apagada nem esperada).
+     * Se o DELETE trancar primeiro, o INSERT ... ON CONFLICT do reserve() espera e, quando a linha some,
+     * simplesmente insere uma nova.
+     *
+     * CTE MATERIALIZED: o lote é escolhido e trancado PRIMEIRO, uma única vez, e só depois apagado. Com
+     * "DELETE ... WHERE id IN (SELECT ... LIMIT ... FOR UPDATE SKIP LOCKED)", quando e quantas vezes a subconsulta
+     * é avaliada fica a critério do planejador; a suíte completa chegou a apagar menos linhas que o esperado.
      */
     @Modifying
     @Query(value = """
-            DELETE FROM payment_idempotency_keys
-            WHERE id IN (
+            WITH batch AS MATERIALIZED (
                 SELECT id FROM payment_idempotency_keys
                 WHERE expires_at <= :now
                 LIMIT :limit
                 FOR UPDATE SKIP LOCKED
             )
+            DELETE FROM payment_idempotency_keys k
+            USING batch
+            WHERE k.id = batch.id
             """, nativeQuery = true)
     int deleteExpired(Instant now, int limit);
 }
