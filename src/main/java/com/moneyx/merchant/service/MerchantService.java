@@ -1,5 +1,7 @@
 package com.moneyx.merchant.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.apikey.service.IssuedApiKey;
 import com.moneyx.merchant.domain.Merchant;
@@ -27,6 +29,8 @@ import java.util.UUID;
 @Service
 public class MerchantService {
 
+    private static final Logger log = LoggerFactory.getLogger(MerchantService.class);
+
     private final MerchantRepository repository;
     private final ApiKeyService apiKeyService;
 
@@ -44,6 +48,8 @@ public class MerchantService {
     public MerchantRegistration register(String legalName, String document, String email) {
         Merchant merchant = createMerchant(legalName, document, email);
         IssuedApiKey apiKey = apiKeyService.issueFor(merchant.getId());
+        // Só ids: documento, e-mail e a chave NUNCA vão para o log.
+        log.info("merchant.registered merchant={} apiKey={}", merchant.getId(), apiKey.apiKey().getId());
         return new MerchantRegistration(merchant, apiKey);
     }
 

@@ -1,6 +1,7 @@
 package com.moneyx.payment.job;
 
 import com.moneyx.payment.service.PaymentMaintenanceService;
+import com.moneyx.shared.observability.RequestIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -37,7 +38,8 @@ public class PaymentMaintenanceJobs {
     /** A cada 1 minuto: PENDING vencidos -> EXPIRED. */
     @Scheduled(fixedDelay = 1, initialDelay = 1, timeUnit = TimeUnit.MINUTES)
     public void expireOverduePayments() {
-        int expired = maintenance.expireOverduePayments();
+        // Cada execução tem o seu id de correlação (job-xxxxxxxx): as linhas dela podem ser filtradas juntas.
+        int expired = RequestIds.runWithNewId("job", maintenance::expireOverduePayments);
         if (expired > 0) {
             log.info("Expired {} overdue payment(s)", expired);
         }
@@ -46,9 +48,12 @@ public class PaymentMaintenanceJobs {
     /** A cada 1 hora: apaga chaves de idempotência vencidas. */
     @Scheduled(fixedDelay = 1, initialDelay = 1, timeUnit = TimeUnit.HOURS)
     public void purgeExpiredIdempotencyKeys() {
-        int purged = maintenance.purgeExpiredIdempotencyKeys();
-        if (purged > 0) {
-            log.info("Purged {} expired idempotency key(s)", purged);
-        }
+        RequestIds.runWithNewId("job", () -> {
+            int purged = maintenance.purgeExpiredIdempotencyKeys();
+            if (purged > 0) {
+                log.info("Purged {} expired idempotency key(s)", purged);
+            }
+            return purged;
+        });
     }
 }

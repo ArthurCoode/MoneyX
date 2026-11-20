@@ -28,6 +28,7 @@ final class DocsText {
             | Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |
             | Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |
             | Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |
+            | Suporte | Toda resposta traz o header `X-Request-Id` (e os erros, o campo `requestId`). Informe-o ao suporte. Você pode enviar o seu próprio (até 64 caracteres `A-Z a-z 0-9 . _ -`) |
             """;
 
     /** Comum aos 4 webhooks; cada um recebe antes uma frase própria (quando é enviado). */

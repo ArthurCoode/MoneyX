@@ -1,5 +1,7 @@
 package com.moneyx.security.ratelimit;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,10 +30,17 @@ public class SignupRateLimitFilter extends OncePerRequestFilter {
 
     private final TokenBucketRateLimiter limiter;
     private final HandlerExceptionResolver exceptionResolver;
+    private final Counter rejections;
 
-    public SignupRateLimitFilter(TokenBucketRateLimiter limiter, HandlerExceptionResolver exceptionResolver) {
+    public SignupRateLimitFilter(TokenBucketRateLimiter limiter, HandlerExceptionResolver exceptionResolver,
+                                 MeterRegistry meterRegistry) {
         this.limiter = limiter;
         this.exceptionResolver = exceptionResolver;
+        // moneyx.rate_limit.rejections{route}: um pico aqui indica abuso (ou um limite apertado demais).
+        this.rejections = Counter.builder("moneyx.rate_limit.rejections")
+                .description("Requisições recusadas pelo limite de tentativas")
+                .tag("route", "signup")
+                .register(meterRegistry);
     }
 
     @Override
@@ -49,6 +58,7 @@ public class SignupRateLimitFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
+        rejections.increment();
         RateLimitExceededException exception = new RateLimitExceededException(decision.retryAfter());
         if (exceptionResolver.resolveException(request, response, null, exception) == null) {
             response.sendError(429); // nunca deixar passar se nenhum handler tratar

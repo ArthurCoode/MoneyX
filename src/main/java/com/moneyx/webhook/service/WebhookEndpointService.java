@@ -1,5 +1,7 @@
 package com.moneyx.webhook.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.moneyx.event.domain.EventType;
 import com.moneyx.shared.crypto.SecretCipher;
 import com.moneyx.webhook.domain.WebhookEndpoint;
@@ -34,6 +36,8 @@ import java.util.UUID;
  */
 @Service
 public class WebhookEndpointService {
+
+    private static final Logger log = LoggerFactory.getLogger(WebhookEndpointService.class);
 
     public static final int MAX_ACTIVE_ENDPOINTS_PER_MERCHANT = 5;
 
@@ -94,6 +98,7 @@ public class WebhookEndpointService {
                 id, merchantId, validUrl, types, ciphertext, secret.displayPrefix(), now));
         recordHistory(endpoint, WebhookEndpointAction.CREATED, apiKeyId, now);
 
+        log.info("webhook_endpoint.created merchant={} endpoint={} events={}", merchantId, endpoint.getId(), types.size());
         return new CreatedWebhookEndpoint(endpoint, secret.plainText());
     }
 
@@ -122,6 +127,7 @@ public class WebhookEndpointService {
         Instant now = now();
         if (endpoint.delete(now)) {
             recordHistory(endpoint, WebhookEndpointAction.DELETED, apiKeyId, now);
+            log.info("webhook_endpoint.deleted merchant={} endpoint={}", merchantId, endpointId);
         }
     }
 
@@ -142,6 +148,7 @@ public class WebhookEndpointService {
         }
         if (endpoint.enable()) {
             recordHistory(endpoint, WebhookEndpointAction.ENABLED, apiKeyId, now());
+            log.info("webhook_endpoint.enabled merchant={} endpoint={}", merchantId, endpointId);
         }
         return endpoint;
     }

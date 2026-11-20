@@ -1,5 +1,7 @@
 package com.moneyx.apikey.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.moneyx.apikey.domain.ApiKey;
 import com.moneyx.apikey.domain.ApiKeyGenerator;
 import com.moneyx.apikey.domain.ApiKeyGenerator.GeneratedApiKey;
@@ -32,6 +34,8 @@ import java.util.UUID;
 @Service
 public class ApiKeyService {
 
+    private static final Logger log = LoggerFactory.getLogger(ApiKeyService.class);
+
     public static final int MAX_ACTIVE_KEYS_PER_MERCHANT = 5;
 
     private final ApiKeyRepository repository;
@@ -59,6 +63,7 @@ public class ApiKeyService {
 
         GeneratedApiKey generated = ApiKeyGenerator.generate();
         ApiKey apiKey = repository.save(ApiKey.issue(merchantId, generated));
+        log.info("api_key.created merchant={} apiKey={} prefix={}", merchantId, apiKey.getId(), apiKey.getKeyPrefix());
         return new IssuedApiKey(apiKey, generated.plainText());
     }
 
@@ -92,6 +97,7 @@ public class ApiKeyService {
 
         // A entidade está gerenciada pelo JPA: a alteração é gravada no commit (sem save explícito).
         apiKey.revoke();
+        log.info("api_key.revoked merchant={} apiKey={}", merchantId, apiKeyId);
     }
 
     /**

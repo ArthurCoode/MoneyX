@@ -8,6 +8,8 @@ import com.moneyx.security.ratelimit.TokenBucketRateLimiter;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -66,6 +68,8 @@ public class SecurityConfig {
             ApiKeyService apiKeyService,
             MerchantService merchantService,
             TokenBucketRateLimiter signupRateLimiter,
+            // Nos testes de fatia web (@WebMvcTest) não há métricas configuradas: usa um registro em memória.
+            ObjectProvider<MeterRegistry> meterRegistry,
             // Existem vários HandlerExceptionResolver no contexto; este é o principal do Spring MVC.
             @Qualifier("handlerExceptionResolver") HandlerExceptionResolver exceptionResolver) throws Exception {
 
@@ -86,7 +90,9 @@ public class SecurityConfig {
                         // seria mascarado como 401, pois o contexto de segurança não é guardado em sessão.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/merchants").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
+                        // Actuator (health, metrics, prometheus): só existe na PORTA DE GERENCIAMENTO (8081, ouvindo
+                        // apenas em 127.0.0.1). Na porta da API (8080) essas rotas nem existem (404).
+                        .requestMatchers(HttpMethod.GET, "/actuator/**").permitAll()
                         // Documentação da API (contrato OpenAPI + Swagger UI): pública, como a do Stripe. Não contém
                         // segredos. Desligável com springdoc.api-docs.enabled=false / springdoc.swagger-ui.enabled=false.
                         .requestMatchers(HttpMethod.GET, "/v3/api-docs", "/v3/api-docs/**",
@@ -100,7 +106,8 @@ public class SecurityConfig {
                 // Limite do cadastro público: é o PRIMEIRO dos nossos filtros (mesma posição, registrado antes),
                 // para recusar o abuso o mais cedo e barato possível.
                 .addFilterBefore(
-                        new SignupRateLimitFilter(signupRateLimiter, exceptionResolver),
+                        new SignupRateLimitFilter(signupRateLimiter, exceptionResolver,
+                                meterRegistry.getIfAvailable(SimpleMeterRegistry::new)),
                         AnonymousAuthenticationFilter.class)
                 // Nosso filtro roda antes do filtro "anônimo": se a chave for válida,
                 // a requisição já chega autenticada às regras de autorização.

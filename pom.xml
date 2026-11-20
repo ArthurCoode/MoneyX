@@ -52,6 +52,12 @@
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>
+		<!-- Métricas no formato Prometheus em /actuator/prometheus (porta de gerenciamento interna). Versão do Boot. -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+			<scope>runtime</scope>
+		</dependency>
 		<!-- Documentação OpenAPI gerada a partir do código (code-first) + Swagger UI. -->
 		<dependency>
 			<groupId>org.springdoc</groupId>
