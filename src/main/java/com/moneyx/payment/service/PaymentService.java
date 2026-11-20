@@ -1,5 +1,6 @@
 package com.moneyx.payment.service;
 
+import com.moneyx.event.domain.EventType;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentIdempotencyKey;
 import com.moneyx.payment.domain.PaymentStatus;
@@ -36,13 +37,16 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentIdempotencyKeyRepository idempotencyKeyRepository;
+    private final PaymentEventRecorder events;
     private final Clock clock;
 
     public PaymentService(PaymentRepository paymentRepository,
                           PaymentIdempotencyKeyRepository idempotencyKeyRepository,
+                          PaymentEventRecorder events,
                           Clock clock) {
         this.paymentRepository = paymentRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -95,8 +99,10 @@ public class PaymentService {
 
         if (reserved == 1) {
             paymentRepository.save(payment);
+            events.record(EventType.PAYMENT_CREATED, payment, now);
             return new PaymentCreation(payment, false);
         }
+        // Daqui em diante é um replay: o pagamento já existia e o payment.created já foi registrado na 1ª vez.
 
         // A chave já existe e está válida: esta requisição é uma repetição.
         // Esta leitura é um comando novo; no PostgreSQL (READ COMMITTED) ela enxerga a linha que a
@@ -145,6 +151,7 @@ public class PaymentService {
         }
 
         payment.markPaid(now);
+        events.record(EventType.PAYMENT_PAID, payment, now);
         return payment;
     }
 
@@ -214,7 +221,7 @@ public class PaymentService {
                 .orElseThrow(PaymentNotFoundException::new);
 
         if (payment.getStatus() == PaymentStatus.CANCELED) {
-            return payment;
+            return payment; // repetição: nada mudou, portanto nenhum evento novo
         }
         if (payment.getStatus() != PaymentStatus.PENDING) {
             throw new PaymentNotPendingException(payment.getStatus());
@@ -227,6 +234,7 @@ public class PaymentService {
         }
 
         payment.cancel(now);
+        events.record(EventType.PAYMENT_CANCELED, payment, now);
         return payment;
     }
 }

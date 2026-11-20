@@ -100,6 +100,7 @@ class PaymentIdempotencyIntegrationTest {
     void cleanUp() {
         // Ordem respeita as FKs: chaves de idempotência -> pagamentos -> comerciantes.
         for (UUID id : createdMerchants) {
+            jdbc.update("DELETE FROM events WHERE merchant_id = ?", id);
             jdbc.update("DELETE FROM payment_idempotency_keys WHERE merchant_id = ?", id);
             jdbc.update("DELETE FROM payments WHERE merchant_id = ?", id);
             jdbc.update("DELETE FROM merchants WHERE id = ?", id);
