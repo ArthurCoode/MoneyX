@@ -49,6 +49,12 @@ public class OpenApiConfig {
     static final String PROBLEM = "Problem";
     static final String PROBLEM_JSON = "application/problem+json";
 
+    private static final java.util.Map<EventType, String> WEBHOOK_SUMMARIES = java.util.Map.of(
+            EventType.PAYMENT_CREATED, "Enviado quando um pagamento é criado (PENDING)",
+            EventType.PAYMENT_PAID, "Enviado quando o Pix é pago (PAID)",
+            EventType.PAYMENT_CANCELED, "Enviado quando o comerciante cancela o pagamento (CANCELED)",
+            EventType.PAYMENT_EXPIRED, "Enviado quando o prazo termina sem pagamento (EXPIRED)");
+
     @Bean
     public OpenAPI moneyxOpenApi() {
         return new OpenAPI()
@@ -106,8 +112,22 @@ public class OpenApiConfig {
                     responses.addApiResponse("403", ref("Forbidden"));
                 }
             }));
+            sortPaths(openApi);
             addWebhooks(openApi);
         };
+    }
+
+    /**
+     * Ordem previsível na Swagger UI: caminhos em ordem alfabética (/x, /x/{id}, /x/{id}/acao). Dentro de cada caminho
+     * os métodos seguem a ordem padrão do OpenAPI (GET, PUT, POST, DELETE). Sem isso, a ordem dependeria da ordem
+     * interna em que o springdoc encontra os métodos, que não é garantida.
+     */
+    private static void sortPaths(OpenAPI openApi) {
+        io.swagger.v3.oas.models.Paths sorted = new io.swagger.v3.oas.models.Paths();
+        openApi.getPaths().entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByKey())
+                .forEach(entry -> sorted.addPathItem(entry.getKey(), entry.getValue()));
+        openApi.setPaths(sorted);
     }
 
     // ---------- webhooks (OpenAPI 3.1) ----------
@@ -121,10 +141,12 @@ public class OpenApiConfig {
                 .addProperty("data", new ObjectSchema().description("Retrato do pagamento no momento do evento (mesmo formato de GET /v1/payments/{id})."));
         openApi.getComponents().addSchemas("Event", envelope);
 
+        // Na ordem do ciclo de vida (a ordem do enum), não em ordem alfabética.
         for (EventType type : EventType.values()) {
             Operation operation = new Operation()
-                    .summary("Evento " + type.value())
-                    .description(DocsText.WEBHOOK_VERIFICATION)
+                    .operationId(webhookOperationId(type))
+                    .summary(WEBHOOK_SUMMARIES.get(type))
+                    .description(WEBHOOK_SUMMARIES.get(type) + ".\n\n" + DocsText.WEBHOOK_DETAILS)
                     .tags(List.of("Webhook Endpoints"))
                     .security(List.of())
                     .addParametersItem(header(WebhookSignature.HEADER, "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>", true))
@@ -164,6 +186,16 @@ public class OpenApiConfig {
 
     private static ApiResponse ref(String name) {
         return new ApiResponse().$ref("#/components/responses/" + name);
+    }
+
+    /** payment.paid -> paymentPaidWebhook (nome usado por geradores de cliente e pelos links da Swagger UI). */
+    private static String webhookOperationId(EventType type) {
+        String[] parts = type.value().split("\\.");
+        StringBuilder id = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            id.append(Character.toUpperCase(parts[i].charAt(0))).append(parts[i].substring(1));
+        }
+        return id.append("Webhook").toString();
     }
 
     private static HeaderParameter header(String name, String description, boolean required) {

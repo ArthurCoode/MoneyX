@@ -1,39 +1,619 @@
 {
-  "openapi" : "3.1.0",
+  "components" : {
+    "responses" : {
+      "BadRequest" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Requisição inválida (campos, parâmetros ou JSON)."
+      },
+      "Conflict" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Regra de negócio violada; veja `code`."
+      },
+      "Forbidden" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Comerciante suspenso ou encerrado."
+      },
+      "NotFound" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."
+      },
+      "TooManyRequests" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Limite de tentativas atingido.",
+        "headers" : {
+          "Retry-After" : {
+            "description" : "Segundos até poder tentar de novo.",
+            "schema" : {
+              "format" : "int32",
+              "type" : "integer"
+            }
+          }
+        }
+      },
+      "Unauthorized" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "API Key ausente, inválida ou revogada.",
+        "headers" : {
+          "WWW-Authenticate" : {
+            "schema" : {
+              "default" : "Bearer",
+              "type" : "string"
+            }
+          }
+        }
+      },
+      "UnprocessableContent" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "Idempotency-Key já usada com outro corpo (`idempotency_key_reused`)."
+      }
+    },
+    "schemas" : {
+      "ApiKeyListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/ApiKeyResponse"
+            },
+            "type" : "array"
+          }
+        },
+        "type" : "object"
+      },
+      "ApiKeyResponse" : {
+        "properties" : {
+          "active" : {
+            "type" : "boolean"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "prefix" : {
+            "type" : "string"
+          },
+          "revokedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "CreateMerchantRequest" : {
+        "properties" : {
+          "document" : {
+            "minLength" : 1,
+            "pattern" : "\\d{11}|\\d{14}|\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}|\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}",
+            "type" : "string"
+          },
+          "email" : {
+            "format" : "email",
+            "maxLength" : 254,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "legalName" : {
+            "maxLength" : 150,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [ "document", "email", "legalName" ],
+        "type" : "object"
+      },
+      "CreatePaymentRequest" : {
+        "properties" : {
+          "amount" : {
+            "format" : "int64",
+            "maximum" : 10000000,
+            "minimum" : 100,
+            "type" : "integer"
+          },
+          "currency" : {
+            "pattern" : "BRL",
+            "type" : "string"
+          },
+          "description" : {
+            "maxLength" : 255,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "expiresInSeconds" : {
+            "format" : "int64",
+            "maximum" : 86400,
+            "minimum" : 300,
+            "type" : "integer"
+          },
+          "externalReference" : {
+            "maxLength" : 64,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [ "amount", "currency" ],
+        "type" : "object"
+      },
+      "CreateWebhookEndpointRequest" : {
+        "properties" : {
+          "enabledEvents" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "url" : {
+            "minLength" : 1,
+            "type" : "string"
+          }
+        },
+        "required" : [ "url" ],
+        "type" : "object"
+      },
+      "CreatedApiKeyResponse" : {
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "key" : {
+            "type" : "string"
+          },
+          "prefix" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "CreatedWebhookEndpointResponse" : {
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "enabledEvents" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "secret" : {
+            "type" : "string"
+          },
+          "secretPrefix" : {
+            "type" : "string"
+          },
+          "url" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "Event" : {
+        "description" : "Envelope do evento. Idêntico a GET /v1/events/{id}.",
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "data" : {
+            "description" : "Retrato do pagamento no momento do evento (mesmo formato de GET /v1/payments/{id}).",
+            "type" : "object"
+          },
+          "id" : {
+            "description" : "Use para descartar repetições.",
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "type" : {
+            "enum" : [ "payment.created", "payment.paid", "payment.canceled", "payment.expired" ],
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "EventListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/EventView"
+            },
+            "type" : "array"
+          },
+          "hasMore" : {
+            "type" : "boolean"
+          }
+        },
+        "type" : "object"
+      },
+      "EventView" : {
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "data" : {
+            "description" : "Retrato do recurso no momento do evento (objeto JSON).",
+            "type" : "object"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "type" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "MerchantRegistrationResponse" : {
+        "properties" : {
+          "apiKey" : {
+            "$ref" : "#/components/schemas/CreatedApiKeyResponse"
+          },
+          "merchant" : {
+            "$ref" : "#/components/schemas/MerchantResponse"
+          }
+        },
+        "type" : "object"
+      },
+      "MerchantResponse" : {
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "document" : {
+            "type" : "string"
+          },
+          "email" : {
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "legalName" : {
+            "type" : "string"
+          },
+          "status" : {
+            "enum" : [ "ACTIVE", "SUSPENDED", "CLOSED" ],
+            "type" : "string"
+          },
+          "updatedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "PaymentListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/PaymentView"
+            },
+            "type" : "array"
+          },
+          "hasMore" : {
+            "type" : "boolean"
+          }
+        },
+        "type" : "object"
+      },
+      "PaymentView" : {
+        "properties" : {
+          "amount" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "canceledAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "currency" : {
+            "type" : "string"
+          },
+          "description" : {
+            "type" : "string"
+          },
+          "expiresAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "externalReference" : {
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "paidAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "pix" : {
+            "$ref" : "#/components/schemas/Pix"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "Pix" : {
+        "properties" : {
+          "copyPaste" : {
+            "type" : "string"
+          },
+          "txid" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "Problem" : {
+        "description" : "Erro no formato Problem Details (RFC 9457).",
+        "properties" : {
+          "code" : {
+            "description" : "Código estável para máquinas, ex.: `payment_not_pending`.",
+            "type" : "string"
+          },
+          "detail" : {
+            "description" : "Mensagem para humanos (pode mudar).",
+            "type" : "string"
+          },
+          "errors" : {
+            "description" : "Somente em erros de validação.",
+            "items" : {
+              "properties" : {
+                "field" : {
+                  "type" : "string"
+                },
+                "message" : {
+                  "type" : "string"
+                }
+              },
+              "type" : "object"
+            },
+            "type" : "array"
+          },
+          "instance" : {
+            "example" : "/v1/payments/…/cancel",
+            "type" : "string"
+          },
+          "status" : {
+            "example" : 409,
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "title" : {
+            "example" : "Conflict",
+            "type" : "string"
+          },
+          "type" : {
+            "example" : "about:blank",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "WebhookDeliveryListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/WebhookDeliveryResponse"
+            },
+            "type" : "array"
+          },
+          "hasMore" : {
+            "type" : "boolean"
+          }
+        },
+        "type" : "object"
+      },
+      "WebhookDeliveryResponse" : {
+        "properties" : {
+          "attempts" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "deliveredAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "endpointId" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "eventId" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "lastAttemptAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "lastDurationMs" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "lastError" : {
+            "type" : "string"
+          },
+          "lastStatusCode" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "nextAttemptAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "WebhookEndpointHistoryEntry" : {
+        "properties" : {
+          "action" : {
+            "type" : "string"
+          },
+          "apiKeyId" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "occurredAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "snapshot" : {
+            "description" : "url e enabledEvents naquele momento (nunca o segredo).",
+            "type" : "object"
+          }
+        },
+        "type" : "object"
+      },
+      "WebhookEndpointHistoryResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/WebhookEndpointHistoryEntry"
+            },
+            "type" : "array"
+          }
+        },
+        "type" : "object"
+      },
+      "WebhookEndpointListResponse" : {
+        "properties" : {
+          "data" : {
+            "items" : {
+              "$ref" : "#/components/schemas/WebhookEndpointResponse"
+            },
+            "type" : "array"
+          }
+        },
+        "type" : "object"
+      },
+      "WebhookEndpointResponse" : {
+        "properties" : {
+          "createdAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "deletedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "disabledAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "enabledEvents" : {
+            "items" : {
+              "type" : "string"
+            },
+            "type" : "array"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "secretPrefix" : {
+            "type" : "string"
+          },
+          "url" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      }
+    },
+    "securitySchemes" : {
+      "bearerAuth" : {
+        "bearerFormat" : "API Key (mx_test_...)",
+        "description" : "Envie a API Key no header `Authorization: Bearer mx_test_...`.",
+        "scheme" : "bearer",
+        "type" : "http"
+      }
+    }
+  },
   "info" : {
-    "description" : "Infraestrutura de pagamentos Pix do MoneyX. **Ambiente sandbox**: dados de teste, nenhum dinheiro real.\n\n## Autenticação\nCadastre-se em `POST /v1/merchants`: a resposta traz a primeira API Key **uma única vez**. Envie-a em todas\nas outras chamadas no header `Authorization: Bearer mx_test_...`. O comerciante é sempre identificado pela\nchave, nunca por um id na URL.\n\n## Valores\nSempre em **centavos** (inteiro): R$ 49,90 = `4990`. Decimais são recusados.\n\n## Idempotência\n`POST /v1/payments` exige o header `Idempotency-Key` (1 a 255 caracteres ASCII visíveis, válida por 24 h).\nRepetir a mesma chave com o mesmo corpo devolve o pagamento original com `Idempotent-Replayed: true`;\ncom outro corpo, `422 idempotency_key_reused`. Gere uma chave nova (ex.: UUID) por pagamento e reutilize-a\napenas para repetir a MESMA requisição (ex.: depois de um timeout).\n\n## Paginação\nListagens usam cursor: `?limit=10&startingAfter=<id do último item da página anterior>`.\nA resposta é `{\"data\": [...], \"hasMore\": true}`.\n\n## Erros\nFormato Problem Details (RFC 9457, `application/problem+json`). Use o campo `code` (estável) para decidir\no que fazer; `detail` é para humanos e pode mudar. Recurso de outro comerciante responde 404, igual a um\nrecurso inexistente.\n\n## Limites\nO cadastro público aceita 5 tentativas por IP em rajada e recupera 1 a cada 2 minutos. Acima disso:\n`429 rate_limit_exceeded` com `Retry-After` (segundos).\n\n## Webhooks\nCadastre uma URL em `POST /v1/webhook-endpoints` para receber os eventos (seção **Webhooks** deste documento).\nCada envio é assinado com o segredo do endpoint (`whsec_...`, mostrado uma única vez no cadastro).\nA entrega é \"pelo menos uma vez\": descarte eventos repetidos pelo `id`.\n",
+    "description" : "API de pagamentos Pix do **MoneyX**, em ambiente **sandbox**: dados de teste, nenhum dinheiro real.\n\n#### Primeiros passos\n1. **Cadastre-se** em `POST /v1/merchants` e guarde a API Key da resposta. Ela aparece uma única vez.\n2. Clique em **Authorize** e cole a chave (`mx_test_...`).\n3. **Crie um pagamento** em `POST /v1/payments` e mostre o `pix.copyPaste` ao pagador.\n4. **Simule o pagamento** em `POST /v1/sandbox/payments/{id}/pay`.\n5. Para **receber avisos**, cadastre uma URL em `POST /v1/webhook-endpoints` (veja *Webhooks*, no fim da página).\n\n#### Regras gerais\n| Tema | Como funciona |\n|---|---|\n| Valores | Sempre em **centavos**: R$ 49,90 = `4990` |\n| Idempotência | `POST /v1/payments` exige o header `Idempotency-Key`. Repetir a mesma chave devolve o mesmo pagamento |\n| Paginação | `?limit=10&startingAfter=<id>` e a resposta traz `data` + `hasMore` |\n| Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |\n| Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |\n| Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |\n",
     "title" : "MoneyX API",
     "version" : "v1"
   },
-  "servers" : [ {
-    "url" : "http://localhost:8080",
-    "description" : "Sandbox local"
-  } ],
-  "security" : [ {
-    "bearerAuth" : [ ]
-  } ],
-  "tags" : [ {
-    "description" : "Cadastro e consulta do próprio comerciante",
-    "name" : "Merchants"
-  }, {
-    "description" : "Chaves de acesso do comerciante",
-    "name" : "API Keys"
-  }, {
-    "description" : "Cobranças Pix: criação, consulta, listagem e cancelamento",
-    "name" : "Payments"
-  }, {
-    "description" : "Simulações que, em produção, acontecem fora do MoneyX",
-    "name" : "Sandbox"
-  }, {
-    "description" : "Histórico de eventos (o mesmo conteúdo enviado por webhook)",
-    "name" : "Events"
-  }, {
-    "description" : "Para onde o MoneyX envia os eventos",
-    "name" : "Webhook Endpoints"
-  }, {
-    "description" : "Entregas de webhook: depuração e reenvio",
-    "name" : "Webhook Deliveries"
-  } ],
+  "openapi" : "3.1.0",
   "paths" : {
     "/v1/api-keys" : {
       "get" : {
@@ -97,8 +677,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -131,16 +711,16 @@
           "name" : "limit",
           "required" : false,
           "schema" : {
-            "type" : "integer",
-            "format" : "int32"
+            "format" : "int32",
+            "type" : "integer"
           }
         }, {
           "in" : "query",
           "name" : "startingAfter",
           "required" : false,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         }, {
           "in" : "query",
@@ -184,8 +764,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -291,24 +871,24 @@
           "name" : "limit",
           "required" : false,
           "schema" : {
-            "type" : "integer",
-            "format" : "int32"
+            "format" : "int32",
+            "type" : "integer"
           }
         }, {
           "in" : "query",
           "name" : "startingAfter",
           "required" : false,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         }, {
           "in" : "query",
           "name" : "status",
           "required" : false,
           "schema" : {
-            "type" : "string",
-            "enum" : [ "PENDING", "PAID", "CANCELED", "EXPIRED" ]
+            "enum" : [ "PENDING", "PAID", "CANCELED", "EXPIRED" ],
+            "type" : "string"
           }
         }, {
           "in" : "query",
@@ -410,8 +990,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -451,8 +1031,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -492,8 +1072,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -533,8 +1113,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -640,8 +1220,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -669,8 +1249,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -707,24 +1287,24 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         }, {
           "in" : "query",
           "name" : "limit",
           "required" : false,
           "schema" : {
-            "type" : "integer",
-            "format" : "int32"
+            "format" : "int32",
+            "type" : "integer"
           }
         }, {
           "in" : "query",
           "name" : "startingAfter",
           "required" : false,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         }, {
           "in" : "query",
@@ -771,8 +1351,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -812,8 +1392,8 @@
           "name" : "id",
           "required" : true,
           "schema" : {
-            "type" : "string",
-            "format" : "uuid"
+            "format" : "uuid",
+            "type" : "string"
           }
         } ],
         "responses" : {
@@ -842,619 +1422,40 @@
       }
     }
   },
-  "components" : {
-    "responses" : {
-      "BadRequest" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "Requisição inválida (campos, parâmetros ou JSON)."
-      },
-      "Conflict" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "Regra de negócio violada; veja `code`."
-      },
-      "Forbidden" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "Comerciante suspenso ou encerrado."
-      },
-      "NotFound" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."
-      },
-      "TooManyRequests" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "Limite de tentativas atingido.",
-        "headers" : {
-          "Retry-After" : {
-            "description" : "Segundos até poder tentar de novo.",
-            "schema" : {
-              "type" : "integer",
-              "format" : "int32"
-            }
-          }
-        }
-      },
-      "Unauthorized" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "API Key ausente, inválida ou revogada.",
-        "headers" : {
-          "WWW-Authenticate" : {
-            "schema" : {
-              "type" : "string",
-              "default" : "Bearer"
-            }
-          }
-        }
-      },
-      "UnprocessableContent" : {
-        "content" : {
-          "application/problem+json" : {
-            "schema" : {
-              "$ref" : "#/components/schemas/Problem"
-            }
-          }
-        },
-        "description" : "Idempotency-Key já usada com outro corpo (`idempotency_key_reused`)."
-      }
-    },
-    "schemas" : {
-      "ApiKeyListResponse" : {
-        "type" : "object",
-        "properties" : {
-          "data" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/ApiKeyResponse"
-            }
-          }
-        }
-      },
-      "ApiKeyResponse" : {
-        "type" : "object",
-        "properties" : {
-          "active" : {
-            "type" : "boolean"
-          },
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "prefix" : {
-            "type" : "string"
-          },
-          "revokedAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          }
-        }
-      },
-      "CreateMerchantRequest" : {
-        "type" : "object",
-        "properties" : {
-          "document" : {
-            "type" : "string",
-            "minLength" : 1,
-            "pattern" : "\\d{11}|\\d{14}|\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}|\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}"
-          },
-          "email" : {
-            "type" : "string",
-            "format" : "email",
-            "maxLength" : 254,
-            "minLength" : 0
-          },
-          "legalName" : {
-            "type" : "string",
-            "maxLength" : 150,
-            "minLength" : 0
-          }
-        },
-        "required" : [ "document", "email", "legalName" ]
-      },
-      "CreatePaymentRequest" : {
-        "type" : "object",
-        "properties" : {
-          "amount" : {
-            "type" : "integer",
-            "format" : "int64",
-            "maximum" : 10000000,
-            "minimum" : 100
-          },
-          "currency" : {
-            "type" : "string",
-            "pattern" : "BRL"
-          },
-          "description" : {
-            "type" : "string",
-            "maxLength" : 255,
-            "minLength" : 0
-          },
-          "expiresInSeconds" : {
-            "type" : "integer",
-            "format" : "int64",
-            "maximum" : 86400,
-            "minimum" : 300
-          },
-          "externalReference" : {
-            "type" : "string",
-            "maxLength" : 64,
-            "minLength" : 0
-          }
-        },
-        "required" : [ "amount", "currency" ]
-      },
-      "CreateWebhookEndpointRequest" : {
-        "type" : "object",
-        "properties" : {
-          "enabledEvents" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string"
-            }
-          },
-          "url" : {
-            "type" : "string",
-            "minLength" : 1
-          }
-        },
-        "required" : [ "url" ]
-      },
-      "CreatedApiKeyResponse" : {
-        "type" : "object",
-        "properties" : {
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "key" : {
-            "type" : "string"
-          },
-          "prefix" : {
-            "type" : "string"
-          }
-        }
-      },
-      "CreatedWebhookEndpointResponse" : {
-        "type" : "object",
-        "properties" : {
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "enabledEvents" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string"
-            }
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "secret" : {
-            "type" : "string"
-          },
-          "secretPrefix" : {
-            "type" : "string"
-          },
-          "url" : {
-            "type" : "string"
-          }
-        }
-      },
-      "Event" : {
-        "type" : "object",
-        "description" : "Envelope do evento. Idêntico a GET /v1/events/{id}.",
-        "properties" : {
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "data" : {
-            "type" : "object",
-            "description" : "Retrato do pagamento no momento do evento (mesmo formato de GET /v1/payments/{id})."
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid",
-            "description" : "Use para descartar repetições."
-          },
-          "type" : {
-            "type" : "string",
-            "enum" : [ "payment.created", "payment.paid", "payment.canceled", "payment.expired" ]
-          }
-        }
-      },
-      "EventListResponse" : {
-        "type" : "object",
-        "properties" : {
-          "data" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/EventView"
-            }
-          },
-          "hasMore" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "EventView" : {
-        "type" : "object",
-        "properties" : {
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "data" : {
-            "type" : "object",
-            "description" : "Retrato do recurso no momento do evento (objeto JSON)."
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "type" : {
-            "type" : "string"
-          }
-        }
-      },
-      "MerchantRegistrationResponse" : {
-        "type" : "object",
-        "properties" : {
-          "apiKey" : {
-            "$ref" : "#/components/schemas/CreatedApiKeyResponse"
-          },
-          "merchant" : {
-            "$ref" : "#/components/schemas/MerchantResponse"
-          }
-        }
-      },
-      "MerchantResponse" : {
-        "type" : "object",
-        "properties" : {
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "document" : {
-            "type" : "string"
-          },
-          "email" : {
-            "type" : "string"
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "legalName" : {
-            "type" : "string"
-          },
-          "status" : {
-            "type" : "string",
-            "enum" : [ "ACTIVE", "SUSPENDED", "CLOSED" ]
-          },
-          "updatedAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          }
-        }
-      },
-      "PaymentListResponse" : {
-        "type" : "object",
-        "properties" : {
-          "data" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/PaymentView"
-            }
-          },
-          "hasMore" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "PaymentView" : {
-        "type" : "object",
-        "properties" : {
-          "amount" : {
-            "type" : "integer",
-            "format" : "int64"
-          },
-          "canceledAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "currency" : {
-            "type" : "string"
-          },
-          "description" : {
-            "type" : "string"
-          },
-          "expiresAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "externalReference" : {
-            "type" : "string"
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "paidAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "pix" : {
-            "$ref" : "#/components/schemas/Pix"
-          },
-          "status" : {
-            "type" : "string"
-          }
-        }
-      },
-      "Pix" : {
-        "type" : "object",
-        "properties" : {
-          "copyPaste" : {
-            "type" : "string"
-          },
-          "txid" : {
-            "type" : "string"
-          }
-        }
-      },
-      "Problem" : {
-        "type" : "object",
-        "description" : "Erro no formato Problem Details (RFC 9457).",
-        "properties" : {
-          "code" : {
-            "type" : "string",
-            "description" : "Código estável para máquinas, ex.: `payment_not_pending`."
-          },
-          "detail" : {
-            "type" : "string",
-            "description" : "Mensagem para humanos (pode mudar)."
-          },
-          "errors" : {
-            "type" : "array",
-            "description" : "Somente em erros de validação.",
-            "items" : {
-              "type" : "object",
-              "properties" : {
-                "field" : {
-                  "type" : "string"
-                },
-                "message" : {
-                  "type" : "string"
-                }
-              }
-            }
-          },
-          "instance" : {
-            "type" : "string",
-            "example" : "/v1/payments/…/cancel"
-          },
-          "status" : {
-            "type" : "integer",
-            "format" : "int32",
-            "example" : 409
-          },
-          "title" : {
-            "type" : "string",
-            "example" : "Conflict"
-          },
-          "type" : {
-            "type" : "string",
-            "example" : "about:blank"
-          }
-        }
-      },
-      "WebhookDeliveryListResponse" : {
-        "type" : "object",
-        "properties" : {
-          "data" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/WebhookDeliveryResponse"
-            }
-          },
-          "hasMore" : {
-            "type" : "boolean"
-          }
-        }
-      },
-      "WebhookDeliveryResponse" : {
-        "type" : "object",
-        "properties" : {
-          "attempts" : {
-            "type" : "integer",
-            "format" : "int32"
-          },
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "deliveredAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "endpointId" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "eventId" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "lastAttemptAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "lastDurationMs" : {
-            "type" : "integer",
-            "format" : "int32"
-          },
-          "lastError" : {
-            "type" : "string"
-          },
-          "lastStatusCode" : {
-            "type" : "integer",
-            "format" : "int32"
-          },
-          "nextAttemptAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "status" : {
-            "type" : "string"
-          }
-        }
-      },
-      "WebhookEndpointHistoryEntry" : {
-        "type" : "object",
-        "properties" : {
-          "action" : {
-            "type" : "string"
-          },
-          "apiKeyId" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "occurredAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "snapshot" : {
-            "type" : "object",
-            "description" : "url e enabledEvents naquele momento (nunca o segredo)."
-          }
-        }
-      },
-      "WebhookEndpointHistoryResponse" : {
-        "type" : "object",
-        "properties" : {
-          "data" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/WebhookEndpointHistoryEntry"
-            }
-          }
-        }
-      },
-      "WebhookEndpointListResponse" : {
-        "type" : "object",
-        "properties" : {
-          "data" : {
-            "type" : "array",
-            "items" : {
-              "$ref" : "#/components/schemas/WebhookEndpointResponse"
-            }
-          }
-        }
-      },
-      "WebhookEndpointResponse" : {
-        "type" : "object",
-        "properties" : {
-          "createdAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "deletedAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "disabledAt" : {
-            "type" : "string",
-            "format" : "date-time"
-          },
-          "enabledEvents" : {
-            "type" : "array",
-            "items" : {
-              "type" : "string"
-            }
-          },
-          "id" : {
-            "type" : "string",
-            "format" : "uuid"
-          },
-          "secretPrefix" : {
-            "type" : "string"
-          },
-          "url" : {
-            "type" : "string"
-          }
-        }
-      }
-    },
-    "securitySchemes" : {
-      "bearerAuth" : {
-        "bearerFormat" : "API Key (mx_test_...)",
-        "description" : "Envie a API Key no header `Authorization: Bearer mx_test_...`.",
-        "scheme" : "bearer",
-        "type" : "http"
-      }
-    }
-  },
+  "security" : [ {
+    "bearerAuth" : [ ]
+  } ],
+  "servers" : [ {
+    "description" : "Sandbox local",
+    "url" : "http://localhost:8080"
+  } ],
+  "tags" : [ {
+    "description" : "Cadastro e consulta do próprio comerciante",
+    "name" : "Merchants"
+  }, {
+    "description" : "Chaves de acesso do comerciante",
+    "name" : "API Keys"
+  }, {
+    "description" : "Cobranças Pix: criação, consulta, listagem e cancelamento",
+    "name" : "Payments"
+  }, {
+    "description" : "Simulações que, em produção, acontecem fora do MoneyX",
+    "name" : "Sandbox"
+  }, {
+    "description" : "Histórico de eventos (o mesmo conteúdo enviado por webhook)",
+    "name" : "Events"
+  }, {
+    "description" : "Para onde o MoneyX envia os eventos",
+    "name" : "Webhook Endpoints"
+  }, {
+    "description" : "Entregas de webhook: depuração e reenvio",
+    "name" : "Webhook Deliveries"
+  } ],
   "webhooks" : {
     "payment.canceled" : {
       "post" : {
-        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "description" : "Enviado quando o comerciante cancela o pagamento (CANCELED).\n\nResponda **2xx** em até 10 s. Qualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h,\n10 h, 24 h, 24 h). Depois de 3 dias só com falhas, o endpoint é desativado.\n\n**Como verificar a assinatura** (`MoneyX-Signature: t=1763650000,v1=5f2b9c...`)\n1. Recuse se `t` tiver mais de 5 minutos de diferença do seu relógio.\n2. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**.\n3. Compare com `v1` em tempo constante.\n4. Descarte eventos cujo `id` você já processou.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nboolean valid = MessageDigest.isEqual(mac.doFinal(rawBody), HexFormat.of().parseHex(v1));\n```\n",
+        "operationId" : "paymentCanceledWebhook",
         "parameters" : [ {
           "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
           "in" : "header",
@@ -1499,13 +1500,14 @@
           }
         },
         "security" : [ ],
-        "summary" : "Evento payment.canceled",
+        "summary" : "Enviado quando o comerciante cancela o pagamento (CANCELED)",
         "tags" : [ "Webhook Endpoints" ]
       }
     },
     "payment.created" : {
       "post" : {
-        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "description" : "Enviado quando um pagamento é criado (PENDING).\n\nResponda **2xx** em até 10 s. Qualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h,\n10 h, 24 h, 24 h). Depois de 3 dias só com falhas, o endpoint é desativado.\n\n**Como verificar a assinatura** (`MoneyX-Signature: t=1763650000,v1=5f2b9c...`)\n1. Recuse se `t` tiver mais de 5 minutos de diferença do seu relógio.\n2. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**.\n3. Compare com `v1` em tempo constante.\n4. Descarte eventos cujo `id` você já processou.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nboolean valid = MessageDigest.isEqual(mac.doFinal(rawBody), HexFormat.of().parseHex(v1));\n```\n",
+        "operationId" : "paymentCreatedWebhook",
         "parameters" : [ {
           "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
           "in" : "header",
@@ -1550,13 +1552,14 @@
           }
         },
         "security" : [ ],
-        "summary" : "Evento payment.created",
+        "summary" : "Enviado quando um pagamento é criado (PENDING)",
         "tags" : [ "Webhook Endpoints" ]
       }
     },
     "payment.expired" : {
       "post" : {
-        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "description" : "Enviado quando o prazo termina sem pagamento (EXPIRED).\n\nResponda **2xx** em até 10 s. Qualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h,\n10 h, 24 h, 24 h). Depois de 3 dias só com falhas, o endpoint é desativado.\n\n**Como verificar a assinatura** (`MoneyX-Signature: t=1763650000,v1=5f2b9c...`)\n1. Recuse se `t` tiver mais de 5 minutos de diferença do seu relógio.\n2. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**.\n3. Compare com `v1` em tempo constante.\n4. Descarte eventos cujo `id` você já processou.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nboolean valid = MessageDigest.isEqual(mac.doFinal(rawBody), HexFormat.of().parseHex(v1));\n```\n",
+        "operationId" : "paymentExpiredWebhook",
         "parameters" : [ {
           "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
           "in" : "header",
@@ -1601,13 +1604,14 @@
           }
         },
         "security" : [ ],
-        "summary" : "Evento payment.expired",
+        "summary" : "Enviado quando o prazo termina sem pagamento (EXPIRED)",
         "tags" : [ "Webhook Endpoints" ]
       }
     },
     "payment.paid" : {
       "post" : {
-        "description" : "Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;\nqualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de\n3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.\n\n### Como verificar a assinatura\nHeader: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`\n\n1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).\n2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).\n3. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.\n4. Compare com `v1` em **tempo constante**.\n5. Descarte o evento se o `id` já foi processado.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nbyte[] expected = mac.doFinal(rawBody);\nboolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));\n```\n",
+        "description" : "Enviado quando o Pix é pago (PAID).\n\nResponda **2xx** em até 10 s. Qualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h,\n10 h, 24 h, 24 h). Depois de 3 dias só com falhas, o endpoint é desativado.\n\n**Como verificar a assinatura** (`MoneyX-Signature: t=1763650000,v1=5f2b9c...`)\n1. Recuse se `t` tiver mais de 5 minutos de diferença do seu relógio.\n2. Calcule `HMAC-SHA256(segredo, t + \".\" + corpo)` sobre os **bytes recebidos**.\n3. Compare com `v1` em tempo constante.\n4. Descarte eventos cujo `id` você já processou.\n\n```java\nMac mac = Mac.getInstance(\"HmacSHA256\");\nmac.init(new SecretKeySpec(secret.getBytes(UTF_8), \"HmacSHA256\"));\nmac.update((t + \".\").getBytes(UTF_8));\nboolean valid = MessageDigest.isEqual(mac.doFinal(rawBody), HexFormat.of().parseHex(v1));\n```\n",
+        "operationId" : "paymentPaidWebhook",
         "parameters" : [ {
           "description" : "t=<timestamp>,v1=<HMAC-SHA256 em hexadecimal>",
           "in" : "header",
@@ -1652,7 +1656,7 @@
           }
         },
         "security" : [ ],
-        "summary" : "Evento payment.paid",
+        "summary" : "Enviado quando o Pix é pago (PAID)",
         "tags" : [ "Webhook Endpoints" ]
       }
     }

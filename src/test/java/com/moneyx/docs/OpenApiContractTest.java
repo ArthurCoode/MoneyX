@@ -85,10 +85,31 @@ class OpenApiContractTest {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
     }
 
-    /** JSON formatado de forma estável e com fim de linha \n (o Git no Windows pode trocar por \r\n). */
+    /**
+     * JSON estável para comparar e versionar: chaves de objetos em ordem alfabética (em todos os níveis) e fim de
+     * linha \n (o Git no Windows pode trocar por \r\n).
+     *
+     * A ordenação é feita AQUI, e não na saída da API: na Swagger UI queremos a ordem natural das operações
+     * (GET antes de DELETE, webhooks no ciclo de vida), mas a comparação não pode depender dessa ordem.
+     * Listas (ex.: parâmetros) mantêm a ordem, que é parte do contrato.
+     */
     private String normalize(String json) {
+        Object sorted = sortKeys(jsonMapper.readValue(json, Object.class));
         return jsonMapper.writerWithDefaultPrettyPrinter()
-                .writeValueAsString(jsonMapper.readTree(json))
+                .writeValueAsString(sorted)
                 .replace("\r\n", "\n") + "\n";
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object sortKeys(Object node) {
+        if (node instanceof Map<?, ?> map) {
+            java.util.TreeMap<String, Object> sorted = new java.util.TreeMap<>();
+            ((Map<String, Object>) map).forEach((key, value) -> sorted.put(key, sortKeys(value)));
+            return sorted;
+        }
+        if (node instanceof List<?> list) {
+            return list.stream().map(OpenApiContractTest::sortKeys).toList();
+        }
+        return node;
     }
 }

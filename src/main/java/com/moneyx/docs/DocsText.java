@@ -1,7 +1,8 @@
 package com.moneyx.docs;
 
 /**
- * Textos longos da documentação (Markdown, renderizado pela Swagger UI). Ficam aqui para não poluir o OpenApiConfig.
+ * Textos da documentação (Markdown renderizado pela Swagger UI). Curtos de propósito: o topo da página é um guia
+ * rápido; os detalhes ficam em cada operação (que aparece recolhida até alguém clicar nela).
  */
 final class DocsText {
 
@@ -9,61 +10,42 @@ final class DocsText {
     }
 
     static final String INTRODUCTION = """
-            Infraestrutura de pagamentos Pix do MoneyX. **Ambiente sandbox**: dados de teste, nenhum dinheiro real.
+            API de pagamentos Pix do **MoneyX**, em ambiente **sandbox**: dados de teste, nenhum dinheiro real.
 
-            ## Autenticação
-            Cadastre-se em `POST /v1/merchants`: a resposta traz a primeira API Key **uma única vez**. Envie-a em todas
-            as outras chamadas no header `Authorization: Bearer mx_test_...`. O comerciante é sempre identificado pela
-            chave, nunca por um id na URL.
+            #### Primeiros passos
+            1. **Cadastre-se** em `POST /v1/merchants` e guarde a API Key da resposta. Ela aparece uma única vez.
+            2. Clique em **Authorize** e cole a chave (`mx_test_...`).
+            3. **Crie um pagamento** em `POST /v1/payments` e mostre o `pix.copyPaste` ao pagador.
+            4. **Simule o pagamento** em `POST /v1/sandbox/payments/{id}/pay`.
+            5. Para **receber avisos**, cadastre uma URL em `POST /v1/webhook-endpoints` (veja *Webhooks*, no fim da página).
 
-            ## Valores
-            Sempre em **centavos** (inteiro): R$ 49,90 = `4990`. Decimais são recusados.
-
-            ## Idempotência
-            `POST /v1/payments` exige o header `Idempotency-Key` (1 a 255 caracteres ASCII visíveis, válida por 24 h).
-            Repetir a mesma chave com o mesmo corpo devolve o pagamento original com `Idempotent-Replayed: true`;
-            com outro corpo, `422 idempotency_key_reused`. Gere uma chave nova (ex.: UUID) por pagamento e reutilize-a
-            apenas para repetir a MESMA requisição (ex.: depois de um timeout).
-
-            ## Paginação
-            Listagens usam cursor: `?limit=10&startingAfter=<id do último item da página anterior>`.
-            A resposta é `{"data": [...], "hasMore": true}`.
-
-            ## Erros
-            Formato Problem Details (RFC 9457, `application/problem+json`). Use o campo `code` (estável) para decidir
-            o que fazer; `detail` é para humanos e pode mudar. Recurso de outro comerciante responde 404, igual a um
-            recurso inexistente.
-
-            ## Limites
-            O cadastro público aceita 5 tentativas por IP em rajada e recupera 1 a cada 2 minutos. Acima disso:
-            `429 rate_limit_exceeded` com `Retry-After` (segundos).
-
-            ## Webhooks
-            Cadastre uma URL em `POST /v1/webhook-endpoints` para receber os eventos (seção **Webhooks** deste documento).
-            Cada envio é assinado com o segredo do endpoint (`whsec_...`, mostrado uma única vez no cadastro).
-            A entrega é "pelo menos uma vez": descarte eventos repetidos pelo `id`.
+            #### Regras gerais
+            | Tema | Como funciona |
+            |---|---|
+            | Valores | Sempre em **centavos**: R$ 49,90 = `4990` |
+            | Idempotência | `POST /v1/payments` exige o header `Idempotency-Key`. Repetir a mesma chave devolve o mesmo pagamento |
+            | Paginação | `?limit=10&startingAfter=<id>` e a resposta traz `data` + `hasMore` |
+            | Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |
+            | Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |
+            | Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |
             """;
 
-    static final String WEBHOOK_VERIFICATION = """
-            Enviado por `POST` para cada endpoint ativo que assina este tipo de evento. Responda **2xx** em até 10 s;
-            qualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h, 10 h, 24 h, 24 h). Depois de
-            3 dias só com falhas o endpoint é desativado; reative com `POST /v1/webhook-endpoints/{id}/enable`.
+    /** Comum aos 4 webhooks; cada um recebe antes uma frase própria (quando é enviado). */
+    static final String WEBHOOK_DETAILS = """
+            Responda **2xx** em até 10 s. Qualquer outra resposta gera nova tentativa (1 min, 5 min, 30 min, 2 h, 5 h,
+            10 h, 24 h, 24 h). Depois de 3 dias só com falhas, o endpoint é desativado.
 
-            ### Como verificar a assinatura
-            Header: `MoneyX-Signature: t=1763650000,v1=5f2b9c...`
-
-            1. Separe `t` (timestamp em segundos) e `v1` (assinatura em hexadecimal).
-            2. Recuse se `|agora - t|` for maior que 5 minutos (proteção contra replay).
-            3. Calcule `HMAC-SHA256(segredo, t + "." + corpo)` sobre os **bytes recebidos**, sem reformatar o JSON.
-            4. Compare com `v1` em **tempo constante**.
-            5. Descarte o evento se o `id` já foi processado.
+            **Como verificar a assinatura** (`MoneyX-Signature: t=1763650000,v1=5f2b9c...`)
+            1. Recuse se `t` tiver mais de 5 minutos de diferença do seu relógio.
+            2. Calcule `HMAC-SHA256(segredo, t + "." + corpo)` sobre os **bytes recebidos**.
+            3. Compare com `v1` em tempo constante.
+            4. Descarte eventos cujo `id` você já processou.
 
             ```java
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret.getBytes(UTF_8), "HmacSHA256"));
             mac.update((t + ".").getBytes(UTF_8));
-            byte[] expected = mac.doFinal(rawBody);
-            boolean valid = MessageDigest.isEqual(expected, HexFormat.of().parseHex(v1));
+            boolean valid = MessageDigest.isEqual(mac.doFinal(rawBody), HexFormat.of().parseHex(v1));
             ```
             """;
 }
