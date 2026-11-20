@@ -9,6 +9,7 @@ import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.support.MutableClock;
+import com.moneyx.support.TestClockConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,9 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
@@ -51,18 +50,11 @@ import static org.mockito.Mockito.doThrow;
  * O relógio é controlado (MutableClock) para simular a passagem de 24 h sem esperar.
  */
 @SpringBootTest
+@Import(TestClockConfig.class)
 class PaymentIdempotencyIntegrationTest {
 
     private static final Instant START = Instant.parse("2026-11-19T12:00:00Z");
 
-    @TestConfiguration
-    static class ClockTestConfig {
-        @Bean
-        @Primary
-        MutableClock testClock() {
-            return new MutableClock(START);
-        }
-    }
 
     private static final CreatePaymentCommand ORDER_123 =
             new CreatePaymentCommand(4990, PaymentCurrency.BRL, "Pedido 123", "order-123", null);

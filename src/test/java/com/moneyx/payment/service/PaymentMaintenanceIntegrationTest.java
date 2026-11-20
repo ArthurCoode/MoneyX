@@ -8,15 +8,14 @@ import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.support.MutableClock;
+import com.moneyx.support.TestClockConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -45,19 +44,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * para o teste e não são tocados.
  */
 @SpringBootTest
+@Import(TestClockConfig.class)
 class PaymentMaintenanceIntegrationTest {
 
     private static final Instant START = Instant.parse("2020-01-01T12:00:00Z");
     private static final Duration DEFAULT_EXPIRATION = Duration.ofMinutes(30);
 
-    @TestConfiguration
-    static class ClockTestConfig {
-        @Bean
-        @Primary
-        MutableClock testClock() {
-            return new MutableClock(START);
-        }
-    }
 
     @Autowired
     private PaymentMaintenanceService maintenance;

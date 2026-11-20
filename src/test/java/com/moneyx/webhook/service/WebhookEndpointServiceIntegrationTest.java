@@ -5,6 +5,7 @@ import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.repository.MerchantRepository;
 import com.moneyx.shared.crypto.SecretCipher;
 import com.moneyx.support.MutableClock;
+import com.moneyx.support.TestClockConfig;
 import com.moneyx.webhook.domain.WebhookEndpoint;
 import com.moneyx.webhook.domain.WebhookEndpointAction;
 import com.moneyx.webhook.domain.WebhookEndpointHistory;
@@ -18,9 +19,7 @@ import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -43,19 +42,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Cadastro de endpoints e linha do tempo contra o PostgreSQL REAL. */
 @SpringBootTest
+@Import(TestClockConfig.class)
 class WebhookEndpointServiceIntegrationTest {
 
     private static final Instant START = Instant.parse("2026-11-20T12:00:00Z");
     private static final String URL = "https://loja.com/webhooks/moneyx";
 
-    @TestConfiguration
-    static class ClockTestConfig {
-        @Bean
-        @Primary
-        MutableClock testClock() {
-            return new MutableClock(START);
-        }
-    }
 
     @Autowired
     private WebhookEndpointService service;
