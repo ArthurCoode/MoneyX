@@ -10,14 +10,13 @@ import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.support.MutableClock;
+import com.moneyx.support.TestClockConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Duration;
@@ -41,18 +40,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Não é @Transactional: cada chamada tem sua própria transação, como requisições HTTP reais.
  */
 @SpringBootTest
+@Import(TestClockConfig.class)
 class PaymentSandboxIntegrationTest {
 
     private static final Instant START = Instant.parse("2026-11-19T12:00:00Z");
 
-    @TestConfiguration
-    static class ClockTestConfig {
-        @Bean
-        @Primary
-        MutableClock testClock() {
-            return new MutableClock(START);
-        }
-    }
 
     private static final CreatePaymentCommand ORDER =
             new CreatePaymentCommand(4990, PaymentCurrency.BRL, "Pedido 123", "order-123", null);
