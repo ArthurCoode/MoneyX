@@ -370,6 +370,32 @@ class WebhookDeliveryIntegrationTest {
                 .containsEntry(healthy, WebhookDeliveryStatus.SUCCEEDED);
     }
 
+    /** Cada tentativa conta na métrica, com o resultado e o código do erro (nunca ids como etiqueta). */
+    @Test
+    void deliveryAttemptsAreCountedByResultAndError() {
+        behavior.put("/broken", 500);
+        endpoint(merchantId, "/broken", null);
+        endpoint(merchantId, "/ok", null);
+        double retriesBefore = deliveries("retry_scheduled", "non_2xx_response");
+        double successesBefore = deliveries("succeeded", "none");
+        createPayment("key-1");
+
+        deliveryService.deliverDue();
+
+        assertThat(deliveries("retry_scheduled", "non_2xx_response")).isEqualTo(retriesBefore + 1);
+        assertThat(deliveries("succeeded", "none")).isEqualTo(successesBefore + 1);
+        assertThat(meterRegistry.find("moneyx.webhook.delivery.duration").tag("outcome", "failure").timer())
+                .isNotNull();
+    }
+
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
+    private double deliveries(String result, String error) {
+        var counter = meterRegistry.find("moneyx.webhook.deliveries").tag("result", result).tag("error", error).counter();
+        return counter == null ? 0 : counter.count();
+    }
+
     // ---------- retentativas ----------
 
     @Test

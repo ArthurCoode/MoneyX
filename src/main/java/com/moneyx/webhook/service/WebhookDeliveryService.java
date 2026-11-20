@@ -22,6 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
@@ -59,6 +62,7 @@ public class WebhookDeliveryService {
     private final JsonMapper jsonMapper;
     private final TransactionTemplate transaction;
     private final Clock clock;
+    private final MeterRegistry meterRegistry;
 
     WebhookDeliveryService(WebhookDeliveryRepository deliveryRepository,
                            WebhookEndpointRepository endpointRepository,
@@ -68,7 +72,8 @@ public class WebhookDeliveryService {
                            WebhookDeliveryProperties properties,
                            JsonMapper jsonMapper,
                            PlatformTransactionManager transactionManager,
-                           Clock clock) {
+                           Clock clock,
+                           MeterRegistry meterRegistry) {
         this.deliveryRepository = deliveryRepository;
         this.endpointRepository = endpointRepository;
         this.endpointService = endpointService;
@@ -78,6 +83,7 @@ public class WebhookDeliveryService {
         this.jsonMapper = jsonMapper;
         this.transaction = new TransactionTemplate(transactionManager);
         this.clock = clock;
+        this.meterRegistry = meterRegistry;
     }
 
     // ---------- envio (job) ----------
@@ -116,6 +122,7 @@ public class WebhookDeliveryService {
         // Removido ou desativado: não envia. Eventos desse período a loja recupera por GET /v1/events.
         if (!endpoint.isEnabled()) {
             finish(claim, d -> d.cancel(claim.token()));
+            countDelivery("canceled", "none");
             return;
         }
 
@@ -138,15 +145,20 @@ public class WebhookDeliveryService {
         WebhookEndpoint endpoint = endpointRepository
                 .lockByIdAndMerchantId(delivery.getEndpointId(), delivery.getMerchantId()).orElseThrow();
 
+        // A TENTATIVA aconteceu (a loja recebeu ou não o POST), então é contada mesmo que o commit a seguir falhe.
+        attemptDuration(outcome.success()).record(java.time.Duration.ofMillis(outcome.durationMs()));
+
         if (outcome.success()) {
             delivery.recordSuccess(token, outcome.statusCode(), outcome.durationMs(), now);
             endpoint.recordDeliverySuccess();
+            countDelivery("succeeded", "none");
             log.info("Webhook delivery {} succeeded (attempt {})", delivery.getId(), delivery.getAttempts());
             return;
         }
 
         boolean rescheduled = delivery.recordFailure(token, outcome.error(), outcome.statusCode(),
                 outcome.durationMs(), now, randomJitter());
+        countDelivery(rescheduled ? "retry_scheduled" : "failed", outcome.error().code());
         if (endpoint.recordDeliveryFailure(now)) {
             endpointService.recordAutomaticDisable(endpoint, now);
             log.warn("Webhook endpoint {} disabled after failing since {}", endpoint.getId(), endpoint.getFailingSince());
@@ -168,6 +180,27 @@ public class WebhookDeliveryService {
             }
             change.accept(delivery);
         });
+    }
+
+    /**
+     * moneyx.webhook.deliveries{result, error}: result in {succeeded, retry_scheduled, failed, canceled};
+     * error é o código estável (ou "none"). Conjuntos pequenos e fechados: nunca ids como etiqueta.
+     */
+    private void countDelivery(String result, String error) {
+        Counter.builder("moneyx.webhook.deliveries")
+                .description("Tentativas de entrega de webhook, por resultado")
+                .tag("result", result)
+                .tag("error", error)
+                .register(meterRegistry)
+                .increment();
+    }
+
+    /** moneyx.webhook.delivery.duration{outcome}: quanto a loja levou para responder (ou até o erro). */
+    private Timer attemptDuration(boolean success) {
+        return Timer.builder("moneyx.webhook.delivery.duration")
+                .description("Duração de cada tentativa de entrega de webhook")
+                .tag("outcome", success ? "success" : "failure")
+                .register(meterRegistry);
     }
 
     /** Sorteia a variação da próxima espera em [-retryJitter, +retryJitter]. */

@@ -1,5 +1,6 @@
 package com.moneyx.webhook.job;
 
+import com.moneyx.shared.observability.RequestIds;
 import com.moneyx.webhook.service.WebhookDeliveryService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
@@ -27,6 +28,6 @@ public class WebhookDeliveryJob {
 
     @Scheduled(fixedDelay = 5, initialDelay = 5, timeUnit = TimeUnit.SECONDS)
     public void deliverDue() {
-        deliveries.deliverDue();
+        RequestIds.runWithNewId("job", deliveries::deliverDue);
     }
 }

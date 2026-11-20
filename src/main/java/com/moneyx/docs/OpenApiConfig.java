@@ -172,6 +172,7 @@ public class OpenApiConfig {
                 .addProperty("detail", new StringSchema().description("Mensagem para humanos (pode mudar)."))
                 .addProperty("instance", new StringSchema().example("/v1/payments/…/cancel"))
                 .addProperty("code", new StringSchema().description("Código estável para máquinas, ex.: `payment_not_pending`."))
+                .addProperty("requestId", new StringSchema().description("Id da requisição (igual ao header `X-Request-Id`). Informe-o ao suporte."))
                 .addProperty("errors", new ArraySchema()
                         .description("Somente em erros de validação.")
                         .items(new ObjectSchema()
