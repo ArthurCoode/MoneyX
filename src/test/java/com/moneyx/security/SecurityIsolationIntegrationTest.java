@@ -79,7 +79,9 @@ class SecurityIsolationIntegrationTest {
     @AfterEach
     void cleanUp() {
         for (UUID merchantId : createdMerchants) {
-            // Ordem respeita as FKs: idempotência -> pagamentos -> chaves -> comerciante.
+            // Ordem respeita as FKs: webhooks -> eventos -> idempotência -> pagamentos -> chaves -> comerciante.
+            jdbc.update("DELETE FROM webhook_endpoint_history WHERE merchant_id = ?", merchantId);
+            jdbc.update("DELETE FROM webhook_endpoints WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM events WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM payment_idempotency_keys WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM payments WHERE merchant_id = ?", merchantId);
@@ -315,6 +317,39 @@ class SecurityIsolationIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("invalid_starting_after"));
+    }
+
+    @Test
+    void merchantCannotSeeChangeOrAuditAnotherMerchantsWebhookEndpoint() throws Exception {
+        String body = mockMvc.perform(post("/v1/webhook-endpoints")
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"url": "https://loja-a.com/hooks"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String endpointOfA = JsonPath.read(body, "$.id");
+
+        mockMvc.perform(get("/v1/webhook-endpoints").header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+        for (var request : List.of(
+                get("/v1/webhook-endpoints/{id}", endpointOfA),
+                get("/v1/webhook-endpoints/{id}/history", endpointOfA),
+                delete("/v1/webhook-endpoints/{id}", endpointOfA))) {
+            mockMvc.perform(request.header(HttpHeaders.AUTHORIZATION, merchantB.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.detail").value("Webhook endpoint not found"));
+        }
+
+        // Continua ativo para A, e a linha do tempo mostra só o cadastro, feito com a chave de A.
+        mockMvc.perform(get("/v1/webhook-endpoints/{id}/history", endpointOfA)
+                        .header(HttpHeaders.AUTHORIZATION, merchantA.bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].action").value("created"))
+                .andExpect(jsonPath("$.data[0].apiKeyId").value(merchantA.keyId().toString()));
     }
 
     /** Ciclo completo pela API: criar → pagar gera payment.created e payment.paid, com o retrato de cada momento. */
