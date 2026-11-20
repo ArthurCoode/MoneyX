@@ -46,4 +46,24 @@ public interface PaymentIdempotencyKeyRepository extends JpaRepository<PaymentId
                 Instant expiresAt);
 
     Optional<PaymentIdempotencyKey> findByMerchantIdAndIdempotencyKey(UUID merchantId, String idempotencyKey);
+
+    /**
+     * Limpeza: apaga até {@code limit} chaves vencidas e devolve quantas apagou.
+     *
+     * Apagar uma chave vencida não muda o comportamento da API: o reserve() já trata chave vencida como livre.
+     * SKIP LOCKED na subconsulta: uma chave que o reserve() está renovando agora é pulada (não é apagada nem
+     * esperada). Se o DELETE trancar primeiro, o INSERT ... ON CONFLICT do reserve() espera e, quando a linha
+     * some, simplesmente insere uma nova.
+     */
+    @Modifying
+    @Query(value = """
+            DELETE FROM payment_idempotency_keys
+            WHERE id IN (
+                SELECT id FROM payment_idempotency_keys
+                WHERE expires_at <= :now
+                LIMIT :limit
+                FOR UPDATE SKIP LOCKED
+            )
+            """, nativeQuery = true)
+    int deleteExpired(Instant now, int limit);
 }
