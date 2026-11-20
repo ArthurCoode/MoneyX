@@ -80,6 +80,7 @@ class SecurityIsolationIntegrationTest {
     void cleanUp() {
         for (UUID merchantId : createdMerchants) {
             // Ordem respeita as FKs: webhooks -> eventos -> idempotência -> pagamentos -> chaves -> comerciante.
+            jdbc.update("DELETE FROM webhook_deliveries WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM webhook_endpoint_history WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM webhook_endpoints WHERE merchant_id = ?", merchantId);
             jdbc.update("DELETE FROM events WHERE merchant_id = ?", merchantId);

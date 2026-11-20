@@ -6,6 +6,7 @@ import com.moneyx.event.exception.EventNotFoundException;
 import com.moneyx.event.exception.InvalidEventCursorException;
 import com.moneyx.event.repository.EventRepository;
 import com.moneyx.event.repository.EventSpecifications;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -26,10 +27,12 @@ public class EventService {
 
     private final EventRepository repository;
     private final JsonMapper jsonMapper;
+    private final ApplicationEventPublisher publisher;
 
-    public EventService(EventRepository repository, JsonMapper jsonMapper) {
+    public EventService(EventRepository repository, JsonMapper jsonMapper, ApplicationEventPublisher publisher) {
         this.repository = repository;
         this.jsonMapper = jsonMapper;
+        this.publisher = publisher;
     }
 
     /**
@@ -45,7 +48,10 @@ public class EventService {
     @Transactional(propagation = Propagation.MANDATORY)
     public Event record(UUID merchantId, EventType type, UUID resourceId, Object data, Instant occurredAt) {
         String json = jsonMapper.writeValueAsString(data);
-        return repository.save(Event.of(merchantId, type, resourceId, json, occurredAt));
+        Event event = repository.save(Event.of(merchantId, type, resourceId, json, occurredAt));
+        // Ouvintes (ex.: criação das entregas de webhook) rodam AQUI, na mesma transação.
+        publisher.publishEvent(new EventRecorded(event));
+        return event;
     }
 
     /** @throws EventNotFoundException evento inexistente ou de outro comerciante */
