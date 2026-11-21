@@ -370,7 +370,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V10. A próxima é `V11__...`.
+- Aplicadas: V1 a V11. A próxima é `V12__...`.
 
 ### Testes
 
@@ -980,16 +980,19 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - `POST /v1/webhook-deliveries/{id}/retry` → só `FAILED` (senão 409 `delivery_not_failed` com `deliveryStatus`); endpoint
   removido/desativado → 409 `webhook_endpoint_unavailable`. Volta para a fila para agora; as tentativas continuam contando
   (agenda esgotada + nova falha → FAILED de novo).
-- **Limitação conhecida (linha do tempo):** a ordem usa `occurred_at, id`. Duas ações no MESMO microssegundo seriam
-  ordenadas pelo id (aleatório). Na prática não acontece (ações vêm de requisições/jobs distintos e a reativação lê a
-  desativação já gravada), mas o desempate ideal é uma coluna de sequência (`GENERATED ALWAYS AS IDENTITY`): avaliar na Fase 6.
+- **Ordem da linha do tempo (resolvido em 2026-11-21, V11):** `occurred_at, seq`. `seq BIGINT GENERATED ALWAYS AS
+  IDENTITY` (+ UNIQUE) é numerada pelo banco no INSERT; a entidade a mapeia somente leitura (`insertable/updatable = false`).
+  Reflete a ordem real porque toda escrita da linha do tempo de um endpoint ocorre sob lock (endpoint ou comerciante).
+  **Nunca desempatar por UUID aleatório nem confiar na ordem física:** `WebhookEndpointServiceIntegrationTest` grava ações
+  no mesmo instante com ids decrescentes e depois faz `CLUSTER` da tabela pelo id (um `UPDATE` não serve: é HOT e o
+  índice mantém a posição antiga). Linhas anteriores à V11 receberam `seq` em ordem arbitrária.
 
 ### Fase 6 — Qualidade e documentação
 
 - [x] Rate limiting no cadastro público de comerciantes (em memória; Redis só com mais de uma instância).
 - [ ] Avaliar limite acumulado de volume por comerciante (dia/mês) como controle de risco.
 - [ ] Expandir testes automatizados.
-- [ ] Linha do tempo de webhooks: coluna de sequência para ordenação estável (ver limitação na Fase 5).
+- [x] Linha do tempo de webhooks: coluna de sequência para ordenação estável (V11, 2026-11-21).
 - [x] Documentar API (OpenAPI 3.1 + Swagger UI + teste de contrato).
 - [ ] Criar Docker Compose completo.
 - [x] Criar pipeline CI (GitHub Actions) e isolar o banco dos testes (Testcontainers).
