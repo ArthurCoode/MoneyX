@@ -51,6 +51,12 @@ updates:
       timezone: America/Sao_Paulo
     cooldown:
       default-days: 7
+    # A versão do Java é decisão do projeto (Java 21 LTS, ver SKILL.md), não do Dependabot: ele propôs 21 → 24, uma
+    # versão SEM suporte longo (PR #2, fechado). Versões maiores do eclipse-temurin são ignoradas; novos digests e
+    # correções da mesma linha 21 continuam chegando. Migrar (ex.: para o 25 LTS) = etapa própria (pom, CI, Dockerfile).
+    ignore:
+      - dependency-name: eclipse-temurin
+        update-types: [version-update:semver-major]
     groups:
       docker-base-images:
         patterns: ["*"]
