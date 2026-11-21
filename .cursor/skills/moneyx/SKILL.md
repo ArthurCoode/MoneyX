@@ -238,6 +238,25 @@ api  →  service  →  repository  →  domain
   (proteção contra IDOR). Ex.: `GET /v1/merchants/me`. Não criar rotas que recebam o `merchantId` do cliente.
 - Endpoints atuais de comerciante: `POST /v1/merchants` (público, `Location: /v1/merchants/me`) e `GET /v1/merchants/me`.
 
+### Headers HTTP de segurança (definido em 2026-11-21, Fase 6 Etapa 5d)
+
+- Padrões do Spring Security mantidos: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Cache-Control: no-cache, no-store, max-age=0, must-revalidate`, `X-XSS-Protection: 0`. Sem header `Server`.
+  O `Cache-Control: no-store` explícito das respostas com segredo continua (não depender só do padrão).
+- `Referrer-Policy: no-referrer` em tudo.
+- `Content-Security-Policy` em DUAS versões (`SecurityConfig`, `DelegatingRequestMatcherHeaderWriter`):
+  API/JSON → `default-src 'none'; frame-ancestors 'none'` (OWASP REST); Swagger UI (`/swagger-ui.html`,
+  `/swagger-ui/**`) → só a própria origem, `'unsafe-inline'` apenas em estilos. **Mudou a Swagger UI (versão, CDN,
+  plugin)? Conferir no navegador** (print headless do Edge + `chrome_debug.log` com `--enable-logging`): em 2026-11-21
+  a página renderizou completa e sem violações. A Swagger UI chama `http://localhost:8080` (servidor fixo):
+  aberta por `127.0.0.1:8080`, o "Try it out" seria barrado por `connect-src 'self'` (origem diferente).
+- **HSTS** só é enviado em HTTPS (correto). Atrás de proxy com TLS (Fase 7): configurar forwarded headers.
+- **Log de requisição malformada:** o Tomcat (`Http11Processor`) registrava a LINHA do header inválido (com a API Key)
+  em INFO na 1ª ocorrência e DEBUG depois → `logging.level.org.apache.coyote.http11.Http11Processor=WARN`.
+  Acontece antes do nosso código: fora do alcance do `ObservabilityIntegrationTest`.
+- Testes em servidor Tomcat REAL: `security/HttpHardeningIntegrationTest` (socket cru com um "canário" em formato de
+  API Key; headers da API e da Swagger UI). Mesmas anotações do `ManagementPortIntegrationTest` (contexto compartilhado).
+
 ### Documentação da API / contrato OpenAPI (definido em 2026-11-20)
 
 - springdoc-openapi **3.2.0** (construído sobre o Spring Boot 4.1.2; versão fixada em `springdoc.version`, o Boot não a
@@ -416,7 +435,10 @@ estar com permissão de execução no git (`git update-index --chmod=+x mvnw`).
   já corrigido na versão seguinte (some quando o Dependabot atualizar a imagem base). Tornar bloqueante quando o ruído
   estiver conhecido.
 - `.github/dependabot.yml`: maven, github-actions e docker; semanal (segunda 06:00, America/Sao_Paulo); minor/patch
-  agrupados por ecossistema, major em PR separado; `cooldown` 7 dias (major do Maven 14). Os PRs do Dependabot são a
+  agrupados por ecossistema, major em PR separado; `cooldown` 7 dias (major do Maven 14). **Versões maiores do
+  `eclipse-temurin` são ignoradas** (`ignore`): o Dependabot propôs Java 21 → 24 (não-LTS, PR #2 fechado); a versão do
+  Java é decisão do projeto. Lição: CI verde num PR do Dependabot não prova tudo (o CI testa com o Java do
+  `setup-java`, não com o da imagem). Os PRs do Dependabot são a
   exceção ao "commit direto na main": revisar, esperar o CI verde e fazer merge. A imagem do Trivy fica num `docker run`
   e **não** é vista pelo Dependabot: atualizar à mão. O `postgres:17-alpine` do `compose.yaml` (só desenvolvimento)
   segue por tag.
