@@ -9,7 +9,7 @@
 # container (ver compose.yaml). Os testes NÃO rodam aqui: eles precisam de Docker (Testcontainers) e já rodam no CI.
 
 # ---------- Estágio 1: build ----------
-FROM eclipse-temurin:21-jdk-alpine@sha256:c07bb82e004a166b5d3d63b84ad70e2e822f228505e2e0c0b8dfdc2890d22f13 AS build
+FROM eclipse-temurin:24-jdk-alpine@sha256:8fdbcb6bc6b846640cea7058e6eeb56c311fae4efaa506a213789134065c6b90 AS build
 WORKDIR /workspace
 
 # Primeiro só o que define as dependências: enquanto o pom.xml não mudar, o Docker reaproveita esta camada
@@ -24,7 +24,7 @@ RUN ./mvnw -B -ntp -DskipTests package \
     && java -Djarmode=tools -jar app.jar extract --layers --destination extracted
 
 # ---------- Estágio 2: runtime ----------
-FROM eclipse-temurin:21-jre-alpine@sha256:5d7689f47d670aca766b9503a70bccc2d73b4eb9221ae8f714ae958313c4ce70 AS runtime
+FROM eclipse-temurin:24-jre-alpine@sha256:4044b6c87cb088885bcd0220f7dc7a8a4aab76577605fa471945d2e98270741f AS runtime
 
 # Usuário e grupo dedicados, sem senha, sem shell de login, com UID/GID numéricos fixos (10001): orquestradores
 # como o Kubernetes conseguem provar que o container não roda como root ("runAsNonRoot").
