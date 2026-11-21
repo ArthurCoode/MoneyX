@@ -168,7 +168,7 @@ public class WebhookEndpointService {
     @Transactional(readOnly = true)
     public List<WebhookEndpointHistory> history(UUID merchantId, UUID endpointId) {
         get(merchantId, endpointId); // 404 se não for do comerciante
-        return historyRepository.findByEndpointIdAndMerchantIdOrderByOccurredAtAscIdAsc(endpointId, merchantId);
+        return historyRepository.findByEndpointIdAndMerchantIdOrderByOccurredAtAscSeqAsc(endpointId, merchantId);
     }
 
     /**

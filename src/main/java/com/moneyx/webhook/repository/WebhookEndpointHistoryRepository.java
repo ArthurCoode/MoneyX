@@ -9,6 +9,9 @@ import java.util.UUID;
 /** Linha do tempo: só se grava (save) e se lê. Não há atualização nem remoção. */
 public interface WebhookEndpointHistoryRepository extends JpaRepository<WebhookEndpointHistory, UUID> {
 
-    /** Do mais antigo para o mais recente (ordem natural de uma linha do tempo); empate desempatado pelo id. */
-    List<WebhookEndpointHistory> findByEndpointIdAndMerchantIdOrderByOccurredAtAscIdAsc(UUID endpointId, UUID merchantId);
+    /**
+     * Do mais antigo para o mais recente (ordem natural de uma linha do tempo). Empate no mesmo instante: ordem de
+     * gravação (seq, numerada pelo banco). Não desempatar pelo id: é um UUID aleatório.
+     */
+    List<WebhookEndpointHistory> findByEndpointIdAndMerchantIdOrderByOccurredAtAscSeqAsc(UUID endpointId, UUID merchantId);
 }
