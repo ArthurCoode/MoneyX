@@ -183,7 +183,9 @@ MoneyX/
 │       ├── java/com/moneyx/               ← espelha a estrutura de main
 │       └── resources/config/application.properties ← propriedades EXTRAS dos testes (ex.: jobs desligados)
 ├── .gitignore
-├── compose.yaml
+├── .dockerignore
+├── Dockerfile                             ← imagem da app (multi-stage, não-root)
+├── compose.yaml                           ← postgres + app
 ├── mvnw / mvnw.cmd
 └── pom.xml
 ```
@@ -411,10 +413,28 @@ O banco de dados é executado em um container Docker exclusivo do MoneyX.
 - Imagem: `postgres:17-alpine`
 - Banco: `moneyx`
 - Usuário: `moneyx_user`
-- Porta: `5432`
+- Porta: `5432`, publicada **só em `127.0.0.1`** (antes era `0.0.0.0`: aceitava conexões de outras máquinas da rede)
 - Volume: `moneyx_moneyx_postgres_data`
 - Arquivo de configuração: `compose.yaml`
-- Credenciais: `.env`
+- Credenciais: `.env` (o Compose o lê sozinho; `${VAR:?mensagem}` faz o Compose recusar subir se faltar a variável)
+
+### Aplicação em container (definido em 2026-11-21, Fase 6 Etapa 5a)
+
+- `Dockerfile` **multi-stage**: estágio `build` (`eclipse-temurin:21-jdk-alpine` + `mvnw package -DskipTests`; os
+  testes rodam no CI, pois precisam de Docker) e estágio `runtime` (`eclipse-temurin:21-jre-alpine`). Imagens base
+  **fixadas por digest** `@sha256:...` (o Dependabot propõe a atualização).
+- Dependências baixadas numa camada separada (`dependency:go-offline` só com `pom.xml`): mudar código não rebaixa tudo.
+- `.jar` extraído em camadas (`-Djarmode=tools extract --layers`), da que menos muda para a que mais muda; arquivos
+  pertencem ao root (a app não altera o próprio código). `ENTRYPOINT java -jar app.jar`.
+- **Usuário não-root** `moneyx`, UID/GID numéricos `10001` (`USER 10001:10001`, compatível com `runAsNonRoot`).
+- `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75` (o padrão da JVM é 25% da memória do container).
+- `HEALTHCHECK` com `wget` em `http://127.0.0.1:8081/actuator/health` **de dentro** do container (`start-period` 60 s).
+- Nenhum segredo na imagem: chegam por variável de ambiente. `.dockerignore` exclui `.env`, `.git`, `target`, `.cursor`.
+- Serviço `app` no Compose: `depends_on: postgres: condition: service_healthy`; banco pelo nome do serviço
+  (`SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/...`, variável de ambiente sobrepõe o properties); só a 8080
+  publicada (em `127.0.0.1`); endurecimento: `read_only: true` + `tmpfs: /tmp` (Tomcat), `cap_drop: ALL`,
+  `no-new-privileges`. Verificado: processo UID 10001, `CapEff` zerado, escrita fora de `/tmp` recusada, sem `javac`
+  nem código-fonte na imagem, nenhum segredo em `docker history`.
 
 ### Segurança das credenciais
 
@@ -430,10 +450,13 @@ O `.gitignore` deve ignorar:
 
 Nunca imprimir ou compartilhar o conteúdo do `.env`.
 
-### Inicialização do banco
+### Inicialização
 
 ```powershell
-docker compose up -d postgres
+docker compose up -d --build   # banco + aplicação (recompila a imagem se o código mudou)
+docker compose up -d postgres  # só o banco (para rodar a app pelo IntelliJ / mvnw)
+docker compose logs -f app     # logs da aplicação
+docker compose stop app        # libera a 8080 antes de rodar a app fora do Docker
 ```
 
 ### Verificar container
@@ -494,6 +517,9 @@ e só precisam de `POSTGRES_PASSWORD`.
 
 ### Executar aplicação
 
+Forma recomendada (sem carregar variáveis na sessão): `docker compose up -d --build`.
+Fora do Docker (para depurar no IntelliJ), com a app do Compose parada:
+
 ```powershell
 .\mvnw.cmd spring-boot:run
 ```
@@ -501,7 +527,8 @@ e só precisam de `POSTGRES_PASSWORD`.
 ### Endereços locais
 
 - Aplicação: http://localhost:8080
-- Healthcheck: http://127.0.0.1:8081/actuator/health (porta de GERENCIAMENTO, só local; na 8080 é 404)
+- Healthcheck: http://127.0.0.1:8081/actuator/health (porta de GERENCIAMENTO, só local; na 8080 é 404). Com a app no
+  Compose, a 8081 existe só DENTRO do container: `docker exec moneyx-app wget -qO- http://127.0.0.1:8081/actuator/health`
 - Métricas: http://127.0.0.1:8081/actuator/prometheus e /actuator/metrics
 - PostgreSQL: localhost:5432
 
