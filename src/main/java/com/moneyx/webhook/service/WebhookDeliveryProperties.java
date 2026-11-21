@@ -15,6 +15,8 @@ import java.time.Duration;
  * @param batchSize      entregas reservadas por vez
  * @param retryJitter    variação máxima, para cima ou para baixo, das esperas entre tentativas (0.1 = ±10%).
  *                       Os testes usam 0 para conferir horários exatos.
+ * @param retention      por quanto tempo uma entrega FINALIZADA é guardada (consulta e reenvio manual); depois disso
+ *                       é apagada pela retenção. Mínimo de 7 dias: mais que a agenda inteira de retentativas (~2,7 dias).
  */
 @ConfigurationProperties("moneyx.webhooks.delivery")
 public record WebhookDeliveryProperties(
@@ -22,7 +24,8 @@ public record WebhookDeliveryProperties(
         @DefaultValue("10s") Duration requestTimeout,
         @DefaultValue("30s") Duration lease,
         @DefaultValue("10") int batchSize,
-        @DefaultValue("0.1") double retryJitter
+        @DefaultValue("0.1") double retryJitter,
+        @DefaultValue("30d") Duration retention
 ) {
 
     public WebhookDeliveryProperties {
@@ -31,6 +34,9 @@ public record WebhookDeliveryProperties(
         }
         if (lease.compareTo(connectTimeout.plus(requestTimeout)) <= 0) {
             throw new IllegalArgumentException("lease must be longer than connectTimeout + requestTimeout");
+        }
+        if (retention.compareTo(Duration.ofDays(7)) < 0) {
+            throw new IllegalArgumentException("retention must be at least 7 days");
         }
         if (batchSize < 1) {
             throw new IllegalArgumentException("batchSize must be at least 1");

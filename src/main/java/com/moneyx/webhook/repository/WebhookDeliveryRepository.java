@@ -5,11 +5,14 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface WebhookDeliveryRepository extends JpaRepository<WebhookDelivery, UUID>,
@@ -46,4 +49,29 @@ public interface WebhookDeliveryRepository extends JpaRepository<WebhookDelivery
     Optional<WebhookDelivery> lockByIdAndMerchantId(UUID id, UUID merchantId);
 
     List<WebhookDelivery> findByEventId(UUID eventId);
+
+    /** Dentre os eventos informados, os que ainda têm alguma entrega (de qualquer status). */
+    @Query("select distinct d.eventId from WebhookDelivery d where d.eventId in :eventIds")
+    Set<UUID> findEventIdsWithDeliveries(Collection<UUID> eventIds);
+
+    /**
+     * Retenção: apaga até {@code limit} entregas FINALIZADAS (entregue, falha definitiva ou cancelada) criadas antes de
+     * {@code cutoff}. Pendentes nunca são apagadas. Mesmo formato da limpeza de chaves de idempotência: CTE
+     * MATERIALIZED (o lote é escolhido e trancado uma única vez) + SKIP LOCKED (uma entrega que o job de envio ou um
+     * reenvio manual está usando agora é pulada).
+     */
+    @Modifying
+    @Query(value = """
+            WITH batch AS MATERIALIZED (
+                SELECT id FROM webhook_deliveries
+                WHERE status IN ('SUCCEEDED', 'FAILED', 'CANCELED')
+                  AND created_at < :cutoff
+                LIMIT :limit
+                FOR UPDATE SKIP LOCKED
+            )
+            DELETE FROM webhook_deliveries d
+            USING batch
+            WHERE d.id = batch.id
+            """, nativeQuery = true)
+    int deleteFinishedCreatedBefore(Instant cutoff, int limit);
 }
