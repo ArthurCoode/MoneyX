@@ -174,7 +174,7 @@ MoneyX/
 │   │   │   └── shared/                    ← código transversal, sem dependência de módulos
 │   │   │       ├── observability/         ← id de correlação (RequestIdFilter, RequestIds, RequestIdErrorAttributes)
 │   │   │       ├── api/                   ← GlobalExceptionHandler (Problem Details)
-│   │   │       ├── config/                ← ClockConfig
+│   │   │       ├── config/                ← ClockConfig, RequiredSettingsCheck (falha cedo sem configuração obrigatória)
 │   │   │       └── crypto/                ← SecretCipher (AES-256-GCM) e CryptoConfig
 │   │   └── resources/
 │   │       ├── application.properties
@@ -512,7 +512,16 @@ foreach ($n in "POSTGRES_PASSWORD", "MONEYX_WEBHOOK_ENCRYPTION_KEY") {
 ```
 
 As duas precisam estar definidas na sessão em que a aplicação for iniciada. **Sem `MONEYX_WEBHOOK_ENCRYPTION_KEY` a
-aplicação não sobe** (de propósito). Os testes usam uma chave fixa de teste (`src/test/resources/config/application.properties`)
+aplicação não sobe** (de propósito).
+
+**Sem `POSTGRES_PASSWORD` a aplicação também não sobe** (desde 2026-11-21): o Spring Boot, sozinho, usaria o texto
+literal `${POSTGRES_PASSWORD}` como senha e o erro seria um enganoso `password authentication failed`.
+`shared/config/RequiredSettingsCheck` (um `EnvironmentPostProcessor`, registrado em `META-INF/spring.factories`) roda
+antes de qualquer bean e recusa valor ausente, em branco ou placeholder não resolvido (nos dois modos do resolvedor).
+`MissingRequiredSettingsFailureAnalyzer` mostra o quadro "APPLICATION FAILED TO START" com a variável que falta e a
+ação. **Nunca** inclui o valor na mensagem. Nova configuração obrigatória: adicionar em `REQUIRED_SETTINGS`
+(propriedade → variável de ambiente). Testes: `RequiredSettingsCheckTest` (7) e `RequiredSettingsStartupTest` (sobe a
+app real sem a senha: falha sem Hikari/Flyway). Os testes usam uma chave fixa de teste (`src/test/resources/config/application.properties`)
 e só precisam de `POSTGRES_PASSWORD`.
 
 ### Executar aplicação
