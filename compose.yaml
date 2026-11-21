@@ -1,14 +1,24 @@
+# Ambiente local completo: PostgreSQL + aplicação MoneyX.
+#
+#   docker compose up -d --build     → sobe tudo (compila a imagem da app se o código mudou)
+#   docker compose up -d postgres    → só o banco (para rodar a app pelo IntelliJ / mvnw)
+#
+# O Compose lê o arquivo .env desta pasta sozinho. "${VAR:?mensagem}" faz o Compose RECUSAR subir com a mensagem
+# se a variável faltar, em vez de subir com um valor vazio.
+#
+# Portas publicadas só em 127.0.0.1: acessíveis desta máquina, não de outras da rede (Wi-Fi, por exemplo).
+
 services:
   postgres:
     image: postgres:17-alpine
     container_name: moneyx-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?defina POSTGRES_DB no .env}
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - moneyx_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,6 +26,34 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  app:
+    build: .
+    image: moneyx-app:local
+    container_name: moneyx-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Dentro da rede do Compose o banco é alcançado pelo NOME do serviço ("postgres"), não por localhost.
+      # Variáveis de ambiente sobrepõem o application.properties (SPRING_DATASOURCE_URL = spring.datasource.url).
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      MONEYX_WEBHOOK_ENCRYPTION_KEY: ${MONEYX_WEBHOOK_ENCRYPTION_KEY:?defina MONEYX_WEBHOOK_ENCRYPTION_KEY no .env}
+    ports:
+      # Só a API. A porta de gerenciamento (8081: health/métricas) fica dentro do container, usada pelo HEALTHCHECK.
+      - "127.0.0.1:8080:8080"
+    # Endurecimento: sistema de arquivos somente leitura (exceto /tmp, usado pelo Tomcat), nenhuma capability do
+    # Linux e proibição de ganhar privilégios depois de iniciado. Uma falha explorada na app tem pouco a fazer.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   moneyx_postgres_data:

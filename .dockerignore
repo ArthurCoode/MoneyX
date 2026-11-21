@@ -1,0 +1,19 @@
+# Tudo o que NÃO deve ser enviado ao Docker no build. O Dockerfile só copia .mvn/, mvnw, pom.xml e src/, mas esta
+# lista é a segunda barreira: o "contexto" inteiro é enviado ao daemon, e segredos nunca devem sair da máquina.
+
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Saídas de build e de IDE
+target/
+.idea/
+*.iml
+.vscode/
+
+# Git, CI e documentação interna
+.git/
+.github/
+.cursor/
+*.md
