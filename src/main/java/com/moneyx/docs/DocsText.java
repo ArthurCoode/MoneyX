@@ -27,6 +27,7 @@ final class DocsText {
             | Paginação | `?limit=10&startingAfter=<id>` e a resposta traz `data` + `hasMore` |
             | Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |
             | Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |
+            | Retenção | Eventos e entregas de webhook ficam disponíveis por **30 dias**; depois, **404**. Pagamentos não expiram da API |
             | Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |
             | Suporte | Toda resposta traz o header `X-Request-Id` (e os erros, o campo `requestId`). Informe-o ao suporte. Você pode enviar o seu próprio (até 64 caracteres `A-Z a-z 0-9 . _ -`) |
             """;

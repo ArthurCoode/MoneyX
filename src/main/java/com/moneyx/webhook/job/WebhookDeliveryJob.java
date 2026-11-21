@@ -1,7 +1,10 @@
 package com.moneyx.webhook.job;
 
 import com.moneyx.shared.observability.RequestIds;
+import com.moneyx.webhook.service.WebhookDeliveryRetentionService;
 import com.moneyx.webhook.service.WebhookDeliveryService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -10,24 +13,42 @@ import org.springframework.scheduling.annotation.Scheduled;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A cada 5 s, envia as entregas de webhook pendentes. Desligado com moneyx.jobs.enabled=false (testes).
+ * Jobs das entregas de webhook. Desligados com moneyx.jobs.enabled=false (testes).
  *
- * fixedDelay: duas execuções nunca se sobrepõem. O agendador tem 2 threads (spring.task.scheduling.pool.size):
- * uma loja lenta atrasa as entregas, mas não o job de expiração de pagamentos.
+ * - A cada 5 s, envia as entregas pendentes.
+ * - A cada 1 hora, apaga as entregas finalizadas que passaram do prazo de retenção.
+ *
+ * fixedDelay: duas execuções do mesmo job nunca se sobrepõem. O agendador tem 2 threads
+ * (spring.task.scheduling.pool.size): uma loja lenta atrasa as entregas, mas não os outros jobs.
  */
 @Configuration
 @EnableScheduling
 @ConditionalOnProperty(name = "moneyx.jobs.enabled", havingValue = "true", matchIfMissing = true)
 public class WebhookDeliveryJob {
 
-    private final WebhookDeliveryService deliveries;
+    private static final Logger log = LoggerFactory.getLogger(WebhookDeliveryJob.class);
 
-    public WebhookDeliveryJob(WebhookDeliveryService deliveries) {
+    private final WebhookDeliveryService deliveries;
+    private final WebhookDeliveryRetentionService retention;
+
+    public WebhookDeliveryJob(WebhookDeliveryService deliveries, WebhookDeliveryRetentionService retention) {
         this.deliveries = deliveries;
+        this.retention = retention;
     }
 
     @Scheduled(fixedDelay = 5, initialDelay = 5, timeUnit = TimeUnit.SECONDS)
     public void deliverDue() {
         RequestIds.runWithNewId("job", deliveries::deliverDue);
+    }
+
+    @Scheduled(fixedDelay = 1, initialDelay = 1, timeUnit = TimeUnit.HOURS)
+    public void purgeExpiredDeliveries() {
+        RequestIds.runWithNewId("job", () -> {
+            int purged = retention.purgeExpired();
+            if (purged > 0) {
+                log.info("Purged {} webhook deliver(ies) past the retention period", purged);
+            }
+            return purged;
+        });
     }
 }
