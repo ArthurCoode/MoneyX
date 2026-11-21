@@ -482,9 +482,7 @@ class WebhookDeliveryIntegrationTest {
         assertThat(endpointService.get(merchantId, endpointId).isEnabled()).isFalse();
 
         behavior.remove("/dead");
-        // Sem avançar o relógio, DISABLED e ENABLED teriam o MESMO instante e a ordem viria do id (aleatório).
-        // Na vida real a reativação sempre acontece depois (é outra requisição); ver limitação na SKILL.
-        clock.advance(Duration.ofSeconds(30));
+        // Sem avançar o relógio: DISABLED e ENABLED no MESMO instante. A coluna seq (V11) garante a ordem de gravação.
         UUID otherKey = UUID.randomUUID();
         endpointService.enable(merchantId, otherKey, endpointId);
         endpointService.enable(merchantId, otherKey, endpointId); // idempotente: sem segundo registro

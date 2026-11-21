@@ -298,9 +298,56 @@ class WebhookEndpointServiceIntegrationTest {
     }
 
     @Test
-    void repeatedDeleteDoesNotAddASecondHistoryEntry() {
+    void actionsAtTheSameInstantAreListedInTheOrderTheyWereRecorded() {
         UUID id = service.create(merchantId, apiKeyId, URL, null).endpoint().getId();
-        clock.advance(Duration.ofSeconds(1)); // sem isso, as duas ações empatariam no mesmo instante
+        Instant sameInstant = START.plus(Duration.ofMinutes(5));
+        // Gravadas nesta ordem, todas no MESMO instante, com ids DECRESCENTES: se a ordenação desempatasse pelo id,
+        // a lista sairia exatamente invertida (determinístico, não depende da sorte do UUID aleatório).
+        String[][] rows = {
+                {"ffffffff-0000-4000-8000-000000000004", "DISABLED"},
+                {"eeeeeeee-0000-4000-8000-000000000003", "ENABLED"},
+                {"dddddddd-0000-4000-8000-000000000002", "DISABLED"},
+                {"cccccccc-0000-4000-8000-000000000001", "ENABLED"}};
+        for (String[] row : rows) {
+            jdbc.update("""
+                    INSERT INTO webhook_endpoint_history (id, endpoint_id, merchant_id, action, api_key_id, occurred_at, snapshot)
+                    VALUES (?::uuid, ?, ?, ?, ?, ?, '{}'::jsonb)""",
+                    row[0], id, merchantId, row[1], row[1].equals("DISABLED") ? null : apiKeyId,
+                    java.sql.Timestamp.from(sameInstant));
+        }
+
+        assertThat(service.history(merchantId, id)).extracting(h -> h.getAction().name())
+                .containsExactly("CREATED", "DISABLED", "ENABLED", "DISABLED", "ENABLED");
+
+        // A ordem também não pode depender de onde as linhas estão GUARDADAS. Sem desempate explícito, o PostgreSQL
+        // devolve a ordem física, que coincide com a de gravação só por acaso. Uma reorganização da tabela (CLUSTER,
+        // VACUUM FULL) a muda: aqui a tabela é reescrita na ordem do id, o INVERSO da gravação, e os índices são
+        // reconstruídos. Um simples UPDATE não basta: é "HOT" (o índice continua apontando para a posição antiga).
+        jdbc.execute("CREATE INDEX tmp_history_by_id ON webhook_endpoint_history (id)");
+        try {
+            jdbc.execute("CLUSTER webhook_endpoint_history USING tmp_history_by_id");
+        } finally {
+            jdbc.execute("DROP INDEX tmp_history_by_id");
+        }
+
+        assertThat(service.history(merchantId, id)).extracting(h -> h.getAction().name())
+                .containsExactly("CREATED", "DISABLED", "ENABLED", "DISABLED", "ENABLED");
+    }
+
+    @Test
+    void sequenceIsAssignedByTheDatabaseAndCannotBeChosenByTheApplication() {
+        UUID id = service.create(merchantId, apiKeyId, URL, null).endpoint().getId();
+
+        assertThatThrownBy(() -> jdbc.update("""
+                INSERT INTO webhook_endpoint_history (id, endpoint_id, merchant_id, action, api_key_id, occurred_at, snapshot, seq)
+                VALUES (gen_random_uuid(), ?, ?, 'DELETED', ?, now(), '{}'::jsonb, 1)""", id, merchantId, apiKeyId))
+                .hasMessageContaining("seq");
+    }
+
+    @Test
+    void repeatedDeleteDoesNotAddASecondHistoryEntry() {
+        // Sem avançar o relógio: CREATED e DELETED no MESMO instante (a coluna seq desempata, V11).
+        UUID id = service.create(merchantId, apiKeyId, URL, null).endpoint().getId();
         service.delete(merchantId, apiKeyId, id);
         service.delete(merchantId, apiKeyId, id);
 

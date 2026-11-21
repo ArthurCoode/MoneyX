@@ -49,6 +49,14 @@ public class WebhookEndpointHistory {
     @Column(nullable = false, updatable = false)
     private String snapshot;
 
+    /**
+     * Ordem de gravação, numerada pelo PostgreSQL (GENERATED ALWAYS AS IDENTITY, V11): desempata ações no mesmo instante.
+     * Somente leitura para o Hibernate (o banco recusaria um valor enviado); fica null num registro recém-criado em
+     * memória e é preenchida ao ler do banco. Usada apenas na ordenação da consulta.
+     */
+    @Column(name = "seq", insertable = false, updatable = false)
+    private Long seq;
+
     protected WebhookEndpointHistory() {
     }
 
