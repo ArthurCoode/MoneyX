@@ -213,7 +213,9 @@ api  →  service  →  repository  →  domain
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
 - Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
   `security → merchant, apikey`, `payment → event` e `webhook → event`. `payment` referencia o comerciante por `merchantId`.
-  `event` não importa nenhum módulo de negócio: recebe tipo, recurso e retrato prontos. Nenhum módulo de negócio importa `security`, exceto a camada `api`
+  `event` não importa nenhum módulo de negócio: recebe tipo, recurso e retrato prontos. Quando `event` precisa saber algo de
+  quem o usa (ex.: "este evento ainda é referenciado?"), ele declara uma interface (`EventReferences`) e o outro módulo a
+  implementa (inversão de dependência; a direção continua `webhook → event`). Nenhum módulo de negócio importa `security`, exceto a camada `api`
   para ler o `AuthenticatedMerchant` (via `@AuthenticationPrincipal`).
   `apikey` nunca importa `merchant`; referencia o comerciante apenas por `merchantId` (UUID).
   Entidades de módulos diferentes não usam `@ManyToOne` entre si; a integridade é garantida por FK no banco.
@@ -306,6 +308,26 @@ api  →  service  →  repository  →  domain
   (`micrometer-registry-prometheus`, runtime). Na 8080 o Actuator não existe. Nos testes a exportação de métricas é
   desligada pelo Boot; `ManagementPortIntegrationTest` usa `@AutoConfigureMetrics` + `RANDOM_PORT` + `management.server.port=0`.
 
+### Retenção de eventos e entregas (definido em 2026-11-21, Fase 6 Etapa 6b)
+
+- **30 dias**, como o Stripe: `moneyx.events.retention=30d` (mínimo 1 dia) e `moneyx.webhooks.delivery.retention=30d`
+  (mínimo 7 dias, mais que a agenda de retentativas). Depois disso, `GET /v1/events/{id}` e as entregas respondem 404
+  (linha "Retenção" no guia da API). **Pagamentos nunca são apagados**; a linha do tempo de webhooks é guardada para sempre.
+- Cada módulo apaga só a PRÓPRIA tabela, num job próprio a cada 1 hora: `event/job/EventRetentionJob` e
+  `WebhookDeliveryJob.purgeExpiredDeliveries`. Sem ordem fixa entre eles: um evento ainda referenciado fica para a
+  rodada seguinte.
+- Entregas: só FINALIZADAS (`SUCCEEDED`, `FAILED`, `CANCELED`) e `created_at < corte`; CTE MATERIALIZED + SKIP LOCKED,
+  laço até lote vazio (mesmo formato da limpeza de chaves de idempotência). Pendentes nunca.
+- Eventos: `EventRetentionService` tranca candidatos (`created_at < corte`) com **cursor `(created_at, id)`** e SKIP LOCKED,
+  pergunta a cada `EventReferences` quais ainda são referenciados e apaga o resto. O cursor é obrigatório: sem ele,
+  candidatos referenciados no começo da fila voltariam em todo lote e o job nunca passaria deles. A FK
+  `webhook_deliveries → events` continua sendo a última barreira.
+- Índices (V12): `events (created_at, id)` e parcial `webhook_deliveries (created_at) WHERE status` finalizado (EXPLAIN
+  conferido: ambos usados; o cursor entra no Index Cond).
+- Testes: `webhook/service/DataRetentionIntegrationTest` (relógio em 2020; limite exato do corte; pendente nunca; ordem
+  independente dos jobs; 501 referenciados à frente; vários lotes). Classe com
+  `@Timeout(value = 60, threadMode = SEPARATE_THREAD)`: laço infinito vira falha em vez de travar a suíte.
+
 ### Rate limiting do cadastro público (definido em 2026-11-20)
 
 - `security/ratelimit/SignupRateLimitFilter` (instanciado no `SecurityConfig`, antes do filtro de API Key) limita
@@ -370,7 +392,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V11. A próxima é `V12__...`.
+- Aplicadas: V1 a V12. A próxima é `V13__...`.
 
 ### Testes
 
