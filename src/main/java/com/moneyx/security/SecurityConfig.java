@@ -25,6 +25,13 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.servlet.HandlerExceptionResolver;
 
 import java.io.IOException;
@@ -51,6 +58,26 @@ public class SecurityConfig {
 
     /** Autoridade concedida apenas a comerciantes ACTIVE. */
     public static final String ACTIVE_MERCHANT = "ACTIVE_MERCHANT";
+
+    /**
+     * Content-Security-Policy das respostas da API (JSON): nada pode ser carregado nem executado, e a resposta não pode
+     * ser embutida em outra página. Se um navegador abrir um JSON da API, ele não vira página com scripts.
+     * Recomendação do OWASP REST Security Cheat Sheet.
+     */
+    static final String API_CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'";
+
+    /**
+     * Content-Security-Policy da Swagger UI, que é uma PÁGINA de verdade: scripts, estilos, imagens e chamadas só da
+     * própria origem. 'unsafe-inline' apenas em estilos (a Swagger UI aplica estilos inline; scripts inline continuam
+     * proibidos). Conferida com a página aberta no navegador, sem violações no console.
+     */
+    static final String DOCS_CONTENT_SECURITY_POLICY = "default-src 'self'; script-src 'self'; "
+            + "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+            + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
+    private static final RequestMatcher DOCS_PAGES = new OrRequestMatcher(
+            PathPatternRequestMatcher.withDefaults().matcher("/swagger-ui.html"),
+            PathPatternRequestMatcher.withDefaults().matcher("/swagger-ui/**"));
 
     /**
      * Limitador do cadastro público. Usa o Clock da aplicação quando existe (testes podem controlá-lo); nos testes
@@ -85,6 +112,15 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // Headers de segurança. Os padrões do Spring Security continuam: X-Content-Type-Options: nosniff,
+                // X-Frame-Options: DENY, Cache-Control: no-store, X-XSS-Protection: 0, e Strict-Transport-Security
+                // (só em HTTPS; atrás de um proxy com TLS, exige configurar os forwarded headers, Fase 7).
+                .headers(headers -> headers
+                        .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER))
+                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(DOCS_PAGES,
+                                new StaticHeadersWriter("Content-Security-Policy", DOCS_CONTENT_SECURITY_POLICY)))
+                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(new NegatedRequestMatcher(DOCS_PAGES),
+                                new StaticHeadersWriter("Content-Security-Policy", API_CONTENT_SECURITY_POLICY))))
                 .authorizeHttpRequests(auth -> auth
                         // Despacho interno para /error (exceção não tratada). Sem isso, um 500
                         // seria mascarado como 401, pois o contexto de segurança não é guardado em sessão.
