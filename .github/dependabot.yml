@@ -1,0 +1,58 @@
+# Dependabot: abre pull requests quando saem versões novas das dependências. Cada PR passa pelo CI antes do merge.
+#
+# - Semanal (segunda de manhã), para não virar uma enxurrada de PRs.
+# - Atualizações menores e de correção (minor/patch) vêm AGRUPADAS num PR por ecossistema; versões maiores (major,
+#   que podem quebrar compatibilidade) vêm em PRs separados, para serem avaliadas uma a uma.
+# - cooldown: só propõe uma versão depois de alguns dias publicada. Versões comprometidas ou com defeito costumam ser
+#   descobertas e retiradas nesse intervalo.
+#
+# A imagem do Trivy, usada num "docker run" dentro do ci.yml, NÃO é vista pelo Dependabot: atualizar à mão.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # Imagens base do Dockerfile (fixadas por tag + digest: o Dependabot atualiza os dois).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    cooldown:
+      default-days: 7
+    groups:
+      docker-base-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: build

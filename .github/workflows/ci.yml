@@ -1,7 +1,12 @@
-# Integração contínua: a cada push na main e a cada pull request, compila e roda TODOS os testes.
+# Integração contínua: a cada push na main e a cada pull request, compila e roda TODOS os testes, e constrói a
+# imagem Docker com uma varredura de vulnerabilidades.
 #
 # Os testes usam Testcontainers (PostgreSQL descartável em Docker). Os runners Linux do GitHub já têm Docker,
 # então não há serviço de banco a configurar nem segredo algum neste workflow.
+#
+# Cadeia de suprimentos: toda action é fixada pelo HASH DO COMMIT (a tag, ex. v7, pode ser movida pelo dono para
+# outro código; o hash não). O comentário ao lado diz a versão. O Dependabot (.github/dependabot.yml) abre PRs para
+# atualizar hash e comentário juntos. Para conferir um hash: a página da tag no repositório da action.
 name: CI
 
 on:
@@ -26,10 +31,12 @@ jobs:
 
     steps:
       - name: Baixar o código
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Instalar Java 21 (Temurin) com cache do Maven
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
@@ -41,8 +48,48 @@ jobs:
       # Só quando falhar: os relatórios do Surefire ficam disponíveis para download na página da execução.
       - name: Publicar relatórios dos testes
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: surefire-reports
           path: target/surefire-reports/
           retention-days: 7
+
+  image:
+    name: Imagem Docker e varredura de vulnerabilidades
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Garante que o Dockerfile continua construindo. A imagem fica só no runner: nada é publicado.
+      - name: Construir a imagem
+        run: docker build --tag moneyx-app:ci .
+
+      # Trivy pela imagem oficial, fixada por digest (uma action de terceiros a menos). Procura vulnerabilidades
+      # conhecidas HIGH/CRITICAL no sistema (Alpine) e nas bibliotecas Java. Por enquanto SÓ AVISA: o resultado vai
+      # para o resumo da execução e não reprova o build (--exit-code 0); continue-on-error cobre falhas do próprio
+      # Trivy (ex.: indisponibilidade ao baixar a base de vulnerabilidades), que não são problema do nosso código.
+      - name: Varredura de vulnerabilidades (Trivy, só aviso)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$RUNNER_TEMP:/out" \
+            aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
+            image --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
+            --format table --table-mode detailed --output /out/trivy.txt moneyx-app:ci
+          # "detailed" lista só o que foi encontrado: arquivo vazio = nenhuma vulnerabilidade HIGH/CRITICAL.
+          {
+            echo "## Trivy: vulnerabilidades HIGH/CRITICAL na imagem"
+            if [ -s "$RUNNER_TEMP/trivy.txt" ]; then
+              echo '```'
+              cat "$RUNNER_TEMP/trivy.txt"
+              echo '```'
+            else
+              echo "Nenhuma encontrada."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
