@@ -102,7 +102,8 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 | Mockito | Testes com dependências simuladas |
 | Spring Security | Segurança e autenticação |
 | springdoc-openapi 3.2.0 (OpenAPI 3.1) | Contrato da API + Swagger UI (`/v3/api-docs`, `/swagger-ui.html`) |
-| GitHub Actions | CI: build + testes a cada push/PR (`.github/workflows/ci.yml`) |
+| GitHub Actions | CI: build + testes + imagem Docker com Trivy a cada push/PR (`.github/workflows/ci.yml`) |
+| Dependabot | PRs semanais de atualização (Maven, Actions, Docker) (`.github/dependabot.yml`) |
 
 ### Decisões importantes
 
@@ -400,8 +401,25 @@ classes dentro da mesma execução), e o relógio em 2020 dos testes de jobs con
 **CI:** `.github/workflows/ci.yml` roda `./mvnw -B -ntp verify` em push na `main` e em pull requests (ubuntu-latest,
 Temurin 21, cache do Maven, `permissions: contents: read`, cancela execuções antigas do mesmo branch, publica
 `target/surefire-reports` só em caso de falha). Sem segredos: os runners do GitHub já têm Docker. O `mvnw` precisa
-estar com permissão de execução no git (`git update-index --chmod=+x mvnw`). Actions por tag de versão maior;
-fixar por hash + Dependabot na revisão de segurança.
+estar com permissão de execução no git (`git update-index --chmod=+x mvnw`).
+
+**Cadeia de suprimentos do CI (definido em 2026-11-21, Fase 6 Etapa 5c):**
+- Toda action fixada pelo **hash do commit** + comentário com a versão (`actions/checkout@<sha> # v7.0.1`,
+  `setup-java` v6.2.0, `upload-artifact` v7.0.2; todas `node24`). Hash conferido como **idêntico** à tag no repositório
+  oficial (`/compare/<tag>...<sha>`), nunca copiado de fork. `checkout` com `persist-credentials: false`.
+- Não adotar versão recém-publicada: preferir a mais nova com **~2 semanas** (`setup-java` v6.3.0 tinha 7 dias e foi
+  preterida). O Dependabot aplica a mesma regra com `cooldown`.
+- Job paralelo `image`: `docker build` (prova que o Dockerfile constrói; nada é publicado) + **Trivy 0.76.2 pela imagem
+  oficial fixada por digest** (não pela action de terceiros), `--severity HIGH,CRITICAL --exit-code 0 --table-mode detailed`,
+  resultado no resumo da execução ("Nenhuma encontrada." quando vazio). **Só avisa** (`exit-code 0` +
+  `continue-on-error` para falhas do próprio Trivy). Em 2026-11-21: 0 HIGH/CRITICAL; 1 MEDIUM no `zlib` da base Alpine,
+  já corrigido na versão seguinte (some quando o Dependabot atualizar a imagem base). Tornar bloqueante quando o ruído
+  estiver conhecido.
+- `.github/dependabot.yml`: maven, github-actions e docker; semanal (segunda 06:00, America/Sao_Paulo); minor/patch
+  agrupados por ecossistema, major em PR separado; `cooldown` 7 dias (major do Maven 14). Os PRs do Dependabot são a
+  exceção ao "commit direto na main": revisar, esperar o CI verde e fazer merge. A imagem do Trivy fica num `docker run`
+  e **não** é vista pelo Dependabot: atualizar à mão. O `postgres:17-alpine` do `compose.yaml` (só desenvolvimento)
+  segue por tag.
 
 ## 7. Infraestrutura PostgreSQL
 
