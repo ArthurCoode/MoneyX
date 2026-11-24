@@ -328,6 +328,28 @@ api  →  service  →  repository  →  domain
   independente dos jobs; 501 referenciados à frente; vários lotes). Classe com
   `@Timeout(value = 60, threadMode = SEPARATE_THREAD)`: laço infinito vira falha em vez de travar a suíte.
 
+### Limite acumulado de volume por comerciante (definido em 2026-11-24, Fase 6 Etapa 6c)
+
+- **R$ 200.000,00 por dia e R$ 2.000.000,00 por mês** por comerciante (`moneyx.payments.volume-limit.daily` / `.monthly`,
+  centavos `long`; `PaymentVolumeLimitProperties`). Controle de risco contra cobranças em massa com chave roubada.
+  Limite por comerciante (coluna própria) fica para a Fase 7.
+- Conta pagamentos **criados e não cancelados** (PENDING, PAID, EXPIRED), por `created_at`. "Dia" e "mês" no fuso
+  `moneyx.payments.volume-limit.zone` (padrão `America/Sao_Paulo`, sempre `ZoneId`, nunca deslocamento fixo).
+- Recusa: **422** `volume_limit_exceeded` com `period` (`daily`|`monthly`), `limit`, `remaining` (centavos) e `resetsAt`
+  (início do próximo dia/mês local). Se os dois estouram, responde `monthly` (tentar amanhã também falharia).
+- Onde: `PaymentService.create` → `PaymentVolumeLimit.check` (MANDATORY) só quando a chave foi reservada agora
+  (repetição não conta nem é recusada), antes do `save`. A recusa desfaz também a reserva da Idempotency-Key.
+- **Trava:** `PaymentRepository.lockMerchantForPaymentCreation` = `SELECT ... FROM merchants ... FOR NO KEY UPDATE`,
+  ANTES da reserva da chave. Sem trava, 10 criações simultâneas furavam o limite (mutação M1). **Deadlock:** os INSERTs
+  com FK para `merchants` pegam `FOR KEY SHARE`; `FOR UPDATE` conflita com ele. As duas proteções (ordem: trava antes
+  da reserva; modo: `NO KEY UPDATE` não conflita com KEY SHARE) se cobrem: provado por mutação que só removendo AS
+  DUAS (`FOR UPDATE` depois da reserva) aparece `deadlock detected`. `NO KEY UPDATE` também não bloqueia pagar/cancelar/
+  expirar outros pagamentos do comerciante (eles gravam eventos, que têm FK para `merchants`).
+- Soma: `COALESCE(SUM(amount), 0) ... WHERE merchant_id = ? AND created_at >= ? AND status <> 'CANCELED'`
+  (índice `(merchant_id, created_at)` da V3). `Math.addExact` na comparação.
+- Testes: `PaymentVolumeLimitIntegrationTest` (limite exato, `remaining`, recusa sem gravar nada e chave reutilizável,
+  replay, cancelados/pagos/expirados, isolamento, virada do dia e do mês em São Paulo, concorrência `@RepeatedTest(5)`).
+
 ### Rate limiting do cadastro público (definido em 2026-11-20)
 
 - `security/ratelimit/SignupRateLimitFilter` (instanciado no `SecurityConfig`, antes do filtro de API Key) limita
@@ -352,7 +374,7 @@ api  →  service  →  repository  →  domain
   Atuais: `api_key_limit_reached`, `last_active_api_key`, `invalid_idempotency_key`, `idempotency_key_reused`,
   `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`,
   `webhook_endpoint_limit_reached`, `invalid_webhook_url`, `webhook_endpoint_deleted`, `webhook_endpoint_unavailable`,
-  `delivery_not_failed`, `rate_limit_exceeded`. O `detail` é para humanos e pode mudar.
+  `delivery_not_failed`, `rate_limit_exceeded`, `volume_limit_exceeded`. O `detail` é para humanos e pode mudar.
 - Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
   quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
@@ -465,6 +487,28 @@ estar com permissão de execução no git (`git update-index --chmod=+x mvnw`).
   e **não** é vista pelo Dependabot: atualizar à mão. O `postgres:17-alpine` do `compose.yaml` (só desenvolvimento)
   segue por tag.
 
+### Rotação da chave de cifragem dos segredos de webhook (definido em 2026-11-24, Fase 6 Etapa 6d)
+
+- **Chaveiro de duas posições:** `MONEYX_WEBHOOK_ENCRYPTION_KEY` (ATIVA, obrigatória: cifra e decifra) e
+  `MONEYX_WEBHOOK_ENCRYPTION_KEY_PREVIOUS` (ANTERIOR, opcional: só decifra). Propriedades
+  `moneyx.webhooks.encryption-key` / `.previous-encryption-key`. Anterior igual à ativa ou mal formada → a app não sobe.
+- **Formato gravado:** `k1.<id da chave>:Base64(nonce || cifra || tag)`. `k1.` = versão do formato; o id são 8 hex do
+  SHA-256 da chave com rótulo fixo (não revela a chave, não precisa de numeração manual, pode ir para log). Valor sem
+  prefixo = formato antigo: tenta a ativa e depois a anterior (o GCM só aceita a chave certa). Id desconhecido →
+  `Decryption failed: unknown encryption key <id>` (a anterior saiu do .env cedo demais). Trocar o id do prefixo não
+  engana (o GCM recusa). AAD continua sendo o id do endpoint. Coluna `VARCHAR(255)`: o valor tem ~115 caracteres.
+- **Recifragem:** `WebhookSecretRotationService.reencryptAll` (job no `WebhookDeliveryJob`, a cada 60 min, 1º após
+  1 min): lotes de 100 com **cursor por id** + `FOR UPDATE SKIP LOCKED` sobre os que NÃO começam com o prefixo ativo
+  (inclusive endpoints removidos). Segredo que não decifra é contado (`failed`), logado só com o id do endpoint e pulado
+  (o cursor passa por ele). Log `webhook_secret.reencryption activeKeyId= reencrypted= failed= remaining=`.
+  `WebhookEndpoint.replaceSecretCiphertext` é o único caminho que altera a coluna; o segredo em si nunca muda (a loja
+  não percebe).
+- **Como rotacionar:** (1) mover o valor atual para `..._PREVIOUS`; (2) gerar a nova ativa e reiniciar; (3) esperar o
+  log com `remaining=0`; (4) apagar a `..._PREVIOUS` e reiniciar. A 1ª subida desta versão já move os segredos antigos
+  (sem prefixo) para o formato novo, sem trocar de chave.
+- Testes: `SecretCipherTest` (18) e `WebhookSecretRotationIntegrationTest` (6; o contexto dos testes tem uma chave
+  anterior fixa, ou seja, está "no meio de uma rotação").
+
 ## 7. Infraestrutura PostgreSQL
 
 O banco de dados é executado em um container Docker exclusivo do MoneyX.
@@ -573,7 +617,8 @@ foreach ($n in "POSTGRES_PASSWORD", "MONEYX_WEBHOOK_ENCRYPTION_KEY") {
 }
 ```
 
-As duas precisam estar definidas na sessão em que a aplicação for iniciada. **Sem `MONEYX_WEBHOOK_ENCRYPTION_KEY` a
+As duas precisam estar definidas na sessão em que a aplicação for iniciada (durante uma rotação, também
+`MONEYX_WEBHOOK_ENCRYPTION_KEY_PREVIOUS`, opcional). **Sem `MONEYX_WEBHOOK_ENCRYPTION_KEY` a
 aplicação não sobe** (de propósito).
 
 **Sem `POSTGRES_PASSWORD` a aplicação também não sobe** (desde 2026-11-21): o Spring Boot, sozinho, usaria o texto
@@ -783,7 +828,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 #### Decisões (definidas em 2026-11-19)
 
 - Valor em **centavos (`long`)**; limites **por operação**: mín. R$ 1,00 (100), máx. R$ 100.000,00 (10.000.000).
-  Limite acumulado por período é controle de risco/antifraude, fora do escopo da v1.
+  Limite acumulado por período: adicionado na Fase 6 (Etapa 6c), ver "Limite acumulado de volume".
 - Estados: `PENDING` → `PAID` | `CANCELED` | `EXPIRED` (todos finais). Reembolso fora da v1.
 - Pagar após o prazo é proibido mesmo se o status ainda for `PENDING` (o job de expiração pode atrasar).
 - Expiração do Pix: padrão 30 min, permitido de 5 min a 24 h.
@@ -939,7 +984,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   128 bits). Chave em `MONEYX_WEBHOOK_ENCRYPTION_KEY` (.env). **AAD = id do endpoint**: texto cifrado copiado para outro
   endpoint não decifra. Diferente da API Key (hash), porque o MoneyX precisa LER o segredo para assinar.
   `WebhookEndpointService.signingSecretOf` é de uso interno (entrega); nunca devolver pela API. Só o prefixo (`whsec_ab12`)
-  aparece depois do cadastro. Rotação da chave de cifragem: Fase 6.
+  aparece depois do cadastro. Rotação da chave de cifragem: ver "Rotação da chave de cifragem" (Fase 6, Etapa 6d).
 - **SSRF:** `WebhookUrlValidator` (cadastro, sem DNS): URL absoluta, `https`, até 2048 caracteres, sem credenciais e sem
   fragmento; rejeita `localhost`/`*.localhost`, IPs internos escritos na URL (loopback, privados, link-local incl.
   169.254.169.254, CGNAT 100.64/10, 0/8, 240/4, multicast, IPv6 ULA fc00::/7, `::ffff:127.0.0.1`) e formas numéricas
@@ -1012,14 +1057,15 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 ### Fase 6 — Qualidade e documentação
 
 - [x] Rate limiting no cadastro público de comerciantes (em memória; Redis só com mais de uma instância).
-- [ ] Avaliar limite acumulado de volume por comerciante (dia/mês) como controle de risco.
+- [x] Limite acumulado de volume por comerciante (R$ 200 mil/dia, R$ 2 mi/mês; 2026-11-24).
+- [x] Rotação da chave de cifragem dos segredos de webhook (chaveiro + recifragem em lotes; 2026-11-24).
 - [ ] Expandir testes automatizados.
 - [x] Linha do tempo de webhooks: coluna de sequência para ordenação estável (V11, 2026-11-21).
 - [x] Documentar API (OpenAPI 3.1 + Swagger UI + teste de contrato).
-- [ ] Criar Docker Compose completo.
+- [x] Criar Docker Compose completo.
 - [x] Criar pipeline CI (GitHub Actions) e isolar o banco dos testes (Testcontainers).
 - [x] Observabilidade (id de correlação, logs estruturados, métricas de negócio, porta de gerenciamento).
-- [ ] Revisar segurança (Compose completo, actions por hash, Dependabot, headers HTTP).
+- [x] Revisar segurança (Compose completo, actions por hash, Dependabot, headers HTTP).
 
 ### Fase 7 — Evolução
 
