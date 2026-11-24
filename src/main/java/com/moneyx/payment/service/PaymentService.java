@@ -10,6 +10,7 @@ import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
+import com.moneyx.payment.exception.VolumeLimitExceededException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.payment.repository.PaymentSpecifications;
@@ -38,15 +39,18 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final PaymentIdempotencyKeyRepository idempotencyKeyRepository;
     private final PaymentEventRecorder events;
+    private final PaymentVolumeLimit volumeLimit;
     private final Clock clock;
 
-    public PaymentService(PaymentRepository paymentRepository,
-                          PaymentIdempotencyKeyRepository idempotencyKeyRepository,
-                          PaymentEventRecorder events,
-                          Clock clock) {
+    PaymentService(PaymentRepository paymentRepository,
+                   PaymentIdempotencyKeyRepository idempotencyKeyRepository,
+                   PaymentEventRecorder events,
+                   PaymentVolumeLimit volumeLimit,
+                   Clock clock) {
         this.paymentRepository = paymentRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.events = events;
+        this.volumeLimit = volumeLimit;
         this.clock = clock;
     }
 
@@ -65,6 +69,7 @@ public class PaymentService {
      *
      * @throws InvalidIdempotencyKeyException se a chave tiver formato inválido
      * @throws IdempotencyKeyReusedException  se a chave já foi usada com outro corpo
+     * @throws VolumeLimitExceededException   se o pagamento passar do limite acumulado do dia ou do mês
      * @throws IllegalArgumentException       se os dados violarem as regras do domínio
      */
     @Transactional
@@ -88,6 +93,13 @@ public class PaymentService {
 
         String fingerprint = command.fingerprint();
 
+        // Limite de volume: tranca o comerciante ANTES de reservar a chave. A reserva insere uma linha com FK para
+        // merchants (pega FOR KEY SHARE). Duas proteções contra deadlock: a ordem (trava antes do KEY SHARE) e o modo
+        // da trava (FOR NO KEY UPDATE não conflita com KEY SHARE). Provado por mutação: só com as DUAS removidas
+        // (FOR UPDATE depois da reserva) as criações simultâneas entram em deadlock. Repetições também passam por aqui.
+        paymentRepository.lockMerchantForPaymentCreation(merchantId)
+                .orElseThrow(() -> new IllegalStateException("Authenticated merchant not found"));
+
         int reserved = idempotencyKeyRepository.reserve(
                 UUID.randomUUID(),
                 merchantId,
@@ -98,6 +110,9 @@ public class PaymentService {
                 now.plus(PaymentIdempotencyKey.TTL));
 
         if (reserved == 1) {
+            // Só pagamentos NOVOS contam (uma repetição não soma de novo nem é recusada). Se estourar, a exceção
+            // desfaz também a reserva da chave: o cliente pode tentar de novo depois com a mesma chave.
+            volumeLimit.check(merchantId, payment.getAmount(), now);
             paymentRepository.save(payment);
             events.record(EventType.PAYMENT_CREATED, payment, now);
             return new PaymentCreation(payment, false);

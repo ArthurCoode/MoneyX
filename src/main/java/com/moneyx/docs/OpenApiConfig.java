@@ -86,7 +86,7 @@ public class OpenApiConfig {
                         .addResponses("Forbidden", problem("Comerciante suspenso ou encerrado."))
                         .addResponses("NotFound", problem("Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."))
                         .addResponses("Conflict", problem("Regra de negócio violada; veja `code`."))
-                        .addResponses("UnprocessableContent", problem("Idempotency-Key já usada com outro corpo (`idempotency_key_reused`)."))
+                        .addResponses("UnprocessableContent", problem("Idempotency-Key já usada com outro corpo (`idempotency_key_reused`) ou limite de volume do dia/mês atingido (`volume_limit_exceeded`, com `period`, `limit`, `remaining` e `resetsAt`)."))
                         .addResponses("TooManyRequests", problem("Limite de tentativas atingido.")
                                 .addHeaderObject("Retry-After", new Header()
                                         .description("Segundos até poder tentar de novo.")

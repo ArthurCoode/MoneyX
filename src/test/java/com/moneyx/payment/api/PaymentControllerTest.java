@@ -6,6 +6,7 @@ import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
+import com.moneyx.payment.exception.VolumeLimitExceededException;
 import com.moneyx.payment.service.CreatePaymentCommand;
 import com.moneyx.payment.service.PaymentCreation;
 import com.moneyx.payment.service.PaymentService;
@@ -160,6 +161,22 @@ class PaymentControllerTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(422))
                 .andExpect(jsonPath("$.code").value("idempotency_key_reused"));
+    }
+
+    @Test
+    void returns422WithCodeAndPeriodDetailsWhenVolumeLimitIsExceeded() throws Exception {
+        when(service.create(eq(merchantId), eq("key-1"), any())).thenThrow(new VolumeLimitExceededException(
+                VolumeLimitExceededException.Period.DAILY, 20_000_000, 1_500, Instant.parse("2026-11-20T03:00:00Z")));
+
+        postPayment("key-1", VALID_BODY)
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("volume_limit_exceeded"))
+                .andExpect(jsonPath("$.period").value("daily"))
+                .andExpect(jsonPath("$.limit").value(20_000_000))
+                .andExpect(jsonPath("$.remaining").value(1_500))
+                .andExpect(jsonPath("$.resetsAt").value("2026-11-20T03:00:00Z"))
+                .andExpect(jsonPath("$.detail").value("This payment would exceed the daily payment volume limit"));
     }
 
     // ---------- validação do corpo (nunca chega ao serviço) ----------
