@@ -3,6 +3,7 @@ package com.moneyx.webhook.job;
 import com.moneyx.shared.observability.RequestIds;
 import com.moneyx.webhook.service.WebhookDeliveryRetentionService;
 import com.moneyx.webhook.service.WebhookDeliveryService;
+import com.moneyx.webhook.service.WebhookSecretRotationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -17,6 +18,7 @@ import java.util.concurrent.TimeUnit;
  *
  * - A cada 5 s, envia as entregas pendentes.
  * - A cada 1 hora, apaga as entregas finalizadas que passaram do prazo de retenção.
+ * - A cada 1 hora (a 1ª, 1 min após subir), recifra com a chave ativa os segredos que ainda usam outra chave.
  *
  * fixedDelay: duas execuções do mesmo job nunca se sobrepõem. O agendador tem 2 threads
  * (spring.task.scheduling.pool.size): uma loja lenta atrasa as entregas, mas não os outros jobs.
@@ -30,10 +32,14 @@ public class WebhookDeliveryJob {
 
     private final WebhookDeliveryService deliveries;
     private final WebhookDeliveryRetentionService retention;
+    private final WebhookSecretRotationService secretRotation;
 
-    public WebhookDeliveryJob(WebhookDeliveryService deliveries, WebhookDeliveryRetentionService retention) {
+    public WebhookDeliveryJob(WebhookDeliveryService deliveries,
+                              WebhookDeliveryRetentionService retention,
+                              WebhookSecretRotationService secretRotation) {
         this.deliveries = deliveries;
         this.retention = retention;
+        this.secretRotation = secretRotation;
     }
 
     @Scheduled(fixedDelay = 5, initialDelay = 5, timeUnit = TimeUnit.SECONDS)
@@ -50,5 +56,10 @@ public class WebhookDeliveryJob {
             }
             return purged;
         });
+    }
+
+    @Scheduled(fixedDelay = 60, initialDelay = 1, timeUnit = TimeUnit.MINUTES)
+    public void reencryptSecrets() {
+        RequestIds.runWithNewId("job", secretRotation::reencryptAll);
     }
 }
