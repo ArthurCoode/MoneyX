@@ -6,6 +6,8 @@ import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
+import com.moneyx.payment.exception.VolumeLimitExceededException;
+import com.moneyx.payment.provider.PixProvider;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.support.MutableClock;
@@ -79,6 +81,10 @@ class PaymentIdempotencyIntegrationTest {
     @MockitoSpyBean
     private PaymentRepository paymentRepository;
 
+    /** Espião do provedor: com um PSP real, cada createCharge cria uma cobrança de verdade (e tem custo). */
+    @MockitoSpyBean
+    private PixProvider pixProvider;
+
     private final List<UUID> createdMerchants = new ArrayList<>();
     private UUID merchantId;
 
@@ -97,6 +103,61 @@ class PaymentIdempotencyIntegrationTest {
             jdbc.update("DELETE FROM payments WHERE merchant_id = ?", id);
             jdbc.update("DELETE FROM merchants WHERE id = ?", id);
         }
+    }
+
+    // ---------- o provedor de Pix só é chamado para pagamentos NOVOS ----------
+
+    @Test
+    void providerIsCalledOnceForANewPaymentAndNeverForItsReplays() {
+        PaymentCreation first = service.create(merchantId, "key-1", ORDER_123);
+        service.create(merchantId, "key-1", ORDER_123);
+        service.create(merchantId, "key-1", ORDER_123);
+
+        // Total de chamadas, com QUALQUER argumento: uma repetição que chamasse o provedor (com outro paymentId)
+        // também precisa ser pega.
+        Mockito.verify(pixProvider, Mockito.times(1)).createCharge(Mockito.any());
+        Mockito.verify(pixProvider).createCharge(Mockito.argThat(request ->
+                request.paymentId().equals(first.payment().getId())
+                        && request.amount() == ORDER_123.amount()
+                        && request.expiresAt().equals(first.payment().getExpiresAt())));
+        assertThat(first.payment().getPixTxid()).isNotNull();
+    }
+
+    @Test
+    void providerIsNeverCalledWhenTheKeyIsReusedWithAnotherBody() {
+        service.create(merchantId, "key-1", ORDER_123);
+        Mockito.clearInvocations(pixProvider);
+
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_456))
+                .isInstanceOf(IdempotencyKeyReusedException.class);
+
+        Mockito.verifyNoInteractions(pixProvider);
+    }
+
+    @Test
+    void providerIsNeverCalledWhenTheVolumeLimitRejectsThePayment() {
+        CreatePaymentCommand max = new CreatePaymentCommand(10_000_000, PaymentCurrency.BRL, null, null, null);
+        service.create(merchantId, "max-1", max);
+        service.create(merchantId, "max-2", max);
+        Mockito.clearInvocations(pixProvider);
+
+        assertThatThrownBy(() -> service.create(merchantId, "over", ORDER_123))
+                .isInstanceOf(VolumeLimitExceededException.class);
+
+        Mockito.verifyNoInteractions(pixProvider);
+    }
+
+    @Test
+    void providerFailureRollsBackEverythingAndTheKeyCanBeRetried() {
+        Mockito.doThrow(new IllegalStateException("provider down")).when(pixProvider).createCharge(Mockito.any());
+
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123))
+                .hasMessage("provider down");
+        assertThat(paymentCount()).isZero();
+        assertThat(idempotencyKeyRepository.findByMerchantIdAndIdempotencyKey(merchantId, "key-1")).isEmpty();
+
+        Mockito.reset(pixProvider);
+        assertThat(service.create(merchantId, "key-1", ORDER_123).replayed()).isFalse();
     }
 
     // ---------- comportamento básico ----------

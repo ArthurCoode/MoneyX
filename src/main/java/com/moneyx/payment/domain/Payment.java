@@ -77,7 +77,7 @@ public class Payment {
     private Instant expiresAt;
 
     /** Identificador da cobrança Pix (campo 62.05 do BR Code), usado na conciliação. */
-    @Column(name = "pix_txid", nullable = false, updatable = false, length = PixCharge.TXID_LENGTH)
+    @Column(name = "pix_txid", nullable = false, updatable = false, length = PixCharge.TXID_MAX_LENGTH)
     private String pixTxid;
 
     /** BR Code ("Pix copia e cola"). */
@@ -141,12 +141,21 @@ public class Payment {
         payment.createdAt = now;
         payment.updatedAt = now;
         payment.expiresAt = now.plus(expiration);
-
-        // A cobrança Pix nasce junto com o pagamento e carrega o mesmo valor.
-        PixCharge pix = PixCharge.sandbox(amount);
-        payment.pixTxid = pix.txid();
-        payment.pixCopyPaste = pix.copyPaste();
+        // A cobrança Pix é emitida depois, por um PixProvider (attachPixCharge), só para pagamentos NOVOS.
         return payment;
+    }
+
+    /**
+     * Anexa a cobrança Pix emitida pelo provedor. Uma vez só: a cobrança de um pagamento nunca é trocada.
+     */
+    public void attachPixCharge(PixCharge pix) {
+        Objects.requireNonNull(pix, "pix must not be null");
+        if (pixTxid != null) {
+            throw new IllegalStateException("Payment already has a Pix charge");
+        }
+        requirePending("charged");
+        this.pixTxid = pix.txid();
+        this.pixCopyPaste = pix.copyPaste();
     }
 
     // ---------- transições de estado ----------

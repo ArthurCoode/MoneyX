@@ -11,6 +11,8 @@ import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
+import com.moneyx.payment.provider.PixChargeRequest;
+import com.moneyx.payment.provider.PixProvider;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.payment.repository.PaymentSpecifications;
@@ -40,17 +42,20 @@ public class PaymentService {
     private final PaymentIdempotencyKeyRepository idempotencyKeyRepository;
     private final PaymentEventRecorder events;
     private final PaymentVolumeLimit volumeLimit;
+    private final PixProvider pixProvider;
     private final Clock clock;
 
     PaymentService(PaymentRepository paymentRepository,
                    PaymentIdempotencyKeyRepository idempotencyKeyRepository,
                    PaymentEventRecorder events,
                    PaymentVolumeLimit volumeLimit,
+                   PixProvider pixProvider,
                    Clock clock) {
         this.paymentRepository = paymentRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.events = events;
         this.volumeLimit = volumeLimit;
+        this.pixProvider = pixProvider;
         this.clock = clock;
     }
 
@@ -113,6 +118,10 @@ public class PaymentService {
             // Só pagamentos NOVOS contam (uma repetição não soma de novo nem é recusada). Se estourar, a exceção
             // desfaz também a reserva da chave: o cliente pode tentar de novo depois com a mesma chave.
             volumeLimit.check(merchantId, payment.getAmount(), now);
+            // Só agora a cobrança é emitida: com um PSP real cada chamada cria uma cobrança de verdade, então uma
+            // repetição (reserved == 0) ou um pedido recusado pelo limite nunca chegam aqui.
+            payment.attachPixCharge(pixProvider.createCharge(new PixChargeRequest(
+                    payment.getId(), payment.getAmount(), payment.getExpiresAt(), payment.getDescription())));
             paymentRepository.save(payment);
             events.record(EventType.PAYMENT_CREATED, payment, now);
             return new PaymentCreation(payment, false);
