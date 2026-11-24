@@ -29,6 +29,7 @@ final class DocsText {
             | Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |
             | Retenção | Eventos e entregas de webhook ficam disponíveis por **30 dias**; depois, **404**. Pagamentos não expiram da API |
             | Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |
+            | Volume | Pagamentos criados e não cancelados somam no máximo **R$ 200 mil por dia** e **R$ 2 milhões por mês** (horário de Brasília). Acima disso, **422** `volume_limit_exceeded` |
             | Suporte | Toda resposta traz o header `X-Request-Id` (e os erros, o campo `requestId`). Informe-o ao suporte. Você pode enviar o seu próprio (até 64 caracteres `A-Z a-z 0-9 . _ -`) |
             """;
 

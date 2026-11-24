@@ -6,6 +6,7 @@ import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
+import com.moneyx.payment.exception.VolumeLimitExceededException;
 import org.springframework.http.HttpStatus;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.ProblemDetail;
@@ -30,6 +31,20 @@ public class PaymentExceptionHandler {
     @ExceptionHandler(IdempotencyKeyReusedException.class)
     public ProblemDetail handleKeyReused(IdempotencyKeyReusedException ex) {
         return withCode(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage(), "idempotency_key_reused");
+    }
+
+    /**
+     * 422: o pedido é válido, mas o comerciante não pode criar mais volume neste período.
+     * Valores em centavos; resetsAt diz quando o período recomeça. Só dados do próprio comerciante.
+     */
+    @ExceptionHandler(VolumeLimitExceededException.class)
+    public ProblemDetail handleVolumeLimit(VolumeLimitExceededException ex) {
+        ProblemDetail body = withCode(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage(), "volume_limit_exceeded");
+        body.setProperty("period", ex.getPeriod().wireName());
+        body.setProperty("limit", ex.getLimit());
+        body.setProperty("remaining", ex.getRemaining());
+        body.setProperty("resetsAt", ex.getResetsAt());
+        return body;
     }
 
     @ExceptionHandler(InvalidCursorException.class)

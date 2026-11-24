@@ -50,4 +50,31 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
             FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
     List<Payment> lockOverduePending(Instant now, int limit);
+
+    /**
+     * Tranca a linha do COMERCIANTE para serializar as criações de pagamento dele (limite de volume).
+     *
+     * Por que a linha do comerciante: "soma + novo <= limite" é uma regra sobre um conjunto que pode começar vazio
+     * (padrão do projeto: trancar a linha "pai").
+     *
+     * Por que FOR NO KEY UPDATE e não FOR UPDATE: os INSERTs com FK para merchants (pagamentos, eventos, chaves de
+     * idempotência) pegam FOR KEY SHARE na linha do comerciante. FOR UPDATE conflita com KEY SHARE; FOR NO KEY UPDATE
+     * não. Assim pagar/cancelar/expirar outros pagamentos (que gravam eventos) não esperam por esta trava, e duas
+     * criações simultâneas continuam sendo serializadas entre si.
+     *
+     * SQL nativo sobre merchants: o módulo payment não importa o módulo merchant (mesmo padrão do webhook).
+     */
+    @Query(value = "SELECT CAST(id AS VARCHAR) FROM merchants WHERE id = :merchantId FOR NO KEY UPDATE",
+            nativeQuery = true)
+    Optional<String> lockMerchantForPaymentCreation(UUID merchantId);
+
+    /**
+     * Soma (centavos) dos pagamentos do comerciante criados a partir de {@code since} e não cancelados.
+     * Usa o índice (merchant_id, created_at) da V3.
+     */
+    @Query(value = """
+            SELECT COALESCE(SUM(amount), 0) FROM payments
+            WHERE merchant_id = :merchantId AND created_at >= :since AND status <> 'CANCELED'
+            """, nativeQuery = true)
+    long sumVolumeCreatedSince(UUID merchantId, Instant since);
 }
