@@ -149,4 +149,36 @@ class PixBrCodeTest {
         }
         return fields;
     }
+
+    // ---------- leitura do txid de um BR Code emitido por outro (ex.: Mercado Pago) ----------
+
+    @Test
+    void readsTheTxidBackFromABrCode() {
+        assertThat(PixBrCode.txidOf(PixBrCode.build(KEY, "MONEYX SANDBOX", "SAO PAULO", 4990, TXID))).contains(TXID);
+        // Formato visto no sandbox do Mercado Pago: minúsculas e dígitos, 21 caracteres.
+        assertThat(PixBrCode.txidOf(PixBrCode.build(KEY, "TESTUSER", "Osasco", 499, "mpqrinter190381238073")))
+                .contains("mpqrinter190381238073");
+    }
+
+    @Test
+    void threeAsterisksMeanNoTxid() {
+        // Exemplo do manual do BCB: o campo 62.05 com "***" (sem txid). build() não aceita "***", então montamos à mão.
+        String payload = PixBrCode.field("00", "01")
+                + PixBrCode.field("26", PixBrCode.field("00", "br.gov.bcb.pix") + PixBrCode.field("01", KEY))
+                + PixBrCode.field("52", "0000") + PixBrCode.field("53", "986") + PixBrCode.field("58", "BR")
+                + PixBrCode.field("59", "Fulano de Tal") + PixBrCode.field("60", "BRASILIA")
+                + PixBrCode.field("62", PixBrCode.field("05", "***")) + "6304";
+
+        assertThat(PixBrCode.txidOf(payload + PixBrCode.crc16Hex(payload))).isEmpty();
+    }
+
+    @Test
+    void refusesToReadACodeWhoseCrcDoesNotMatch() {
+        String code = PixBrCode.build(KEY, "MONEYX SANDBOX", "SAO PAULO", 4990, TXID);
+        String tampered = code.replace(TXID, "ZBCDEFGHIJKLMNOPQRSTUVWXY");
+
+        assertThatThrownBy(() -> PixBrCode.txidOf(tampered)).hasMessage("BR Code CRC does not match");
+        assertThatThrownBy(() -> PixBrCode.txidOf("0002")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PixBrCode.txidOf(null)).isInstanceOf(IllegalArgumentException.class);
+    }
 }

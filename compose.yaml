@@ -44,6 +44,8 @@ services:
       MONEYX_WEBHOOK_ENCRYPTION_KEY: ${MONEYX_WEBHOOK_ENCRYPTION_KEY:?defina MONEYX_WEBHOOK_ENCRYPTION_KEY no .env}
       # Opcional: só durante a rotação da chave (vazio = nenhuma chave anterior).
       MONEYX_WEBHOOK_ENCRYPTION_KEY_PREVIOUS: ${MONEYX_WEBHOOK_ENCRYPTION_KEY_PREVIOUS:-}
+      # Opcional até a Etapa 7c: credencial do Mercado Pago (vazio = provedor não configurado).
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-}
     ports:
       # Só a API. A porta de gerenciamento (8081: health/métricas) fica dentro do container, usada pelo HEALTHCHECK.
       - "127.0.0.1:8080:8080"
