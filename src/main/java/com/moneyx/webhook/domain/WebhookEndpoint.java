@@ -45,7 +45,8 @@ public class WebhookEndpoint {
     @Column(name = "enabled_events", nullable = false, updatable = false)
     private String[] enabledEvents;
 
-    @Column(name = "secret_ciphertext", nullable = false, updatable = false)
+    /** Atualizável SÓ pela rotação da chave de cifragem (replaceSecretCiphertext): o segredo em si nunca muda. */
+    @Column(name = "secret_ciphertext", nullable = false)
     private String secretCiphertext;
 
     @Column(name = "secret_prefix", nullable = false, updatable = false, length = 20)
@@ -161,6 +162,14 @@ public class WebhookEndpoint {
      * @return true se reativou agora
      * @throws IllegalStateException se o endpoint foi removido (remoção é definitiva)
      */
+    /**
+     * Troca o texto cifrado do segredo pelo MESMO segredo cifrado com outra chave (rotação da chave de cifragem).
+     * Não muda o segredo de assinatura: a loja não percebe nada.
+     */
+    public void replaceSecretCiphertext(String newCiphertext) {
+        this.secretCiphertext = Objects.requireNonNull(newCiphertext, "newCiphertext must not be null");
+    }
+
     public boolean enable() {
         if (!isActive()) {
             throw new IllegalStateException("A deleted webhook endpoint cannot be enabled");

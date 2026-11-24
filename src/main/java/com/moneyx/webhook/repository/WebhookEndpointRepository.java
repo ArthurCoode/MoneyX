@@ -39,4 +39,26 @@ public interface WebhookEndpointRepository extends JpaRepository<WebhookEndpoint
      */
     @Query(value = "SELECT CAST(id AS VARCHAR) FROM merchants WHERE id = :merchantId FOR UPDATE", nativeQuery = true)
     Optional<String> lockMerchant(UUID merchantId);
+
+    /**
+     * Rotação da chave: tranca até {@code limit} endpoints (inclusive removidos) cujo segredo NÃO está cifrado com a
+     * chave ativa, em ordem de id e a partir de {@code after} (cursor).
+     *
+     * O cursor é obrigatório: um segredo que não decifra (ex.: corrompido) continua candidato para sempre; sem o
+     * cursor, ele voltaria em todo lote e a rotina nunca terminaria (mesma lição da retenção de eventos).
+     * SKIP LOCKED: endpoints trancados por uma entrega em andamento ficam para a próxima execução.
+     */
+    @Query(value = """
+            SELECT * FROM webhook_endpoints
+            WHERE secret_ciphertext NOT LIKE :activePrefixPattern AND id > :after
+            ORDER BY id
+            LIMIT :limit
+            FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
+    List<WebhookEndpoint> lockNotEncryptedWith(String activePrefixPattern, UUID after, int limit);
+
+    /** Quantos segredos ainda não estão com a chave ativa (quando der 0, a chave anterior pode sair do .env). */
+    @Query(value = "SELECT count(*) FROM webhook_endpoints WHERE secret_ciphertext NOT LIKE :activePrefixPattern",
+            nativeQuery = true)
+    long countNotEncryptedWith(String activePrefixPattern);
 }
