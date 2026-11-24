@@ -37,3 +37,9 @@ build/
 .env
 .env.*
 !.env.example
+
+# Certificados e chaves de provedores (ex.: .p12 da Efí). Nunca vão para o Git.
+secrets/
+*.p12
+*.pfx
+*.pem
