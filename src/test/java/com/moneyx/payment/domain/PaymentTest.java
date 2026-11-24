@@ -27,6 +27,50 @@ class PaymentTest {
     // ---------- criação ----------
 
     @Nested
+    class PixChargeAttachment {
+
+        private final PixCharge charge = new PixCharge("TXID0000000000000000000001", "000201...6304ABCD");
+
+        @Test
+        void newPaymentHasNoChargeUntilTheProviderIssuesOne() {
+            Payment payment = pending();
+
+            assertThat(payment.getPixTxid()).isNull();
+            assertThat(payment.getPixCopyPaste()).isNull();
+
+            payment.attachPixCharge(charge);
+
+            assertThat(payment.getPixTxid()).isEqualTo(charge.txid());
+            assertThat(payment.getPixCopyPaste()).isEqualTo(charge.copyPaste());
+        }
+
+        @Test
+        void chargeIsAttachedOnlyOnce() {
+            Payment payment = pending();
+            payment.attachPixCharge(charge);
+
+            assertThatThrownBy(() -> payment.attachPixCharge(new PixCharge("OTHER", "000201...")))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(payment.getPixTxid()).isEqualTo(charge.txid());
+        }
+
+        @Test
+        void onlyPendingPaymentsReceiveACharge() {
+            Payment payment = pending();
+            payment.cancel(NOW);
+
+            assertThatThrownBy(() -> payment.attachPixCharge(charge)).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void chargeRequiresTxidAndCopyPaste() {
+            assertThatThrownBy(() -> new PixCharge(null, "x")).isInstanceOf(NullPointerException.class);
+            assertThatThrownBy(() -> new PixCharge(" ", "x")).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new PixCharge("x", "")).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Nested
     class Creation {
 
         @Test
