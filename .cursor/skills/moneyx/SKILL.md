@@ -167,7 +167,8 @@ MoneyX/
 │   │   │   │   ├── exception/             ← erros de negócio do módulo
 │   │   │   │   └── api/                   ← controllers, DTOs e tratamento de erros do módulo
 │   │   │   ├── apikey/                    ← módulo de API Keys (mesmas camadas do merchant)
-│   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas + job/ para agendamentos)
+│   │   │   ├── payment/                   ← módulo de pagamentos (mesmas camadas + job/ para agendamentos
+│   │   │   │                                 + provider/ para o emissor da cobrança Pix: sandbox ou PSP)
 │   │   │   ├── event/                     ← módulo de eventos (histórico + Outbox), genérico
 │   │   │   ├── webhook/                   ← endpoints, linha do tempo, entregas assinadas (+ job/)
 │   │   │   ├── docs/                      ← OpenApiConfig + textos do guia (contrato OpenAPI)
@@ -209,7 +210,9 @@ api  →  service  →  repository  →  domain
 - `service` orquestra `domain` e `repository` e lança as exceções do módulo.
 - `api` conhece apenas `service` e seus DTOs; nunca acessa o repositório diretamente.
 - `job` (agendamentos) segue a mesma regra de `api`: é só um ponto de entrada que chama `service`.
-- Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta.
+- Não adotar arquitetura hexagonal (ports/adapters) sem necessidade concreta. **Exceção com necessidade concreta (Fase 7):**
+  `payment/provider/PixProvider` é uma porta para o PSP (sandbox local ou Mercado Pago). Direção: `service → provider → domain`;
+  `provider` não conhece `service`, `repository` nem `api`.
 - `shared` contém apenas código transversal e nunca importa classes de módulos.
 - Dependências entre módulos são unidirecionais e explícitas. Atualmente: `merchant → apikey` e
   `security → merchant, apikey`, `payment → event` e `webhook → event`. `payment` referencia o comerciante por `merchantId`.
@@ -873,8 +876,40 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - `String.format` sempre com `Locale.ROOT` (dígitos ASCII independentemente do idioma do servidor).
 - Validado contra o exemplo do manual do BCB (CRC `1D3D`), o check value do CRC (`29B1`) e vetores de
   implementação independente (Python).
-- **Sandbox:** recebedor fictício (`PixCharge.SANDBOX_*`; chave do exemplo do manual, não registrada no DICT,
-  portanto não pagável de verdade). Na Fase 7 o BR Code (dinâmico) virá do PSP autorizado.
+- **Sandbox:** recebedor fictício (`SandboxPixProvider.PIX_KEY` etc.; chave do exemplo do manual, não registrada no
+  DICT, portanto não pagável de verdade). Na Fase 7 o BR Code (dinâmico) vem do PSP (Mercado Pago).
+- **Emissor da cobrança (desde 2026-11-24, Fase 7 Etapa 7a):** `payment/provider/PixProvider` (`name()`,
+  `createCharge(PixChargeRequest)` → `PixCharge(txid, copyPaste)`), escolhido por `moneyx.pix.provider` (padrão
+  `sandbox` = `SandboxPixProvider`, BR Code local). `Payment.create` NÃO gera mais o Pix: `attachPixCharge` (uma vez,
+  só PENDING). `PaymentService.create` chama o provedor **só para pagamento novo**: depois da reserva da
+  Idempotency-Key E do limite de volume, antes do `save` (com um PSP real cada chamada cria uma cobrança de verdade).
+  Falha do provedor desfaz tudo e a chave pode ser repetida. Testado com espião do provedor em
+  `PaymentIdempotencyIntegrationTest` (repetição, chave com outro corpo e recusa por volume nunca chamam o provedor).
+- **Cliente do Mercado Pago (2026-11-24, Etapa 7b; ainda NÃO ligado como provedor, isso é a 7c):**
+  `payment/provider/mercadopago/MercadoPagoClient` (API de **Orders**, `HttpClient` do JDK + Jackson, sem SDK):
+  `createPixOrder` (`POST /v1/orders`), `getOrder`, `cancelOrder` (`POST /v1/orders/{id}/cancel`). Configuração
+  `moneyx.pix.mercadopago.*` (`MercadoPagoProperties`; token em `MERCADOPAGO_ACCESS_TOKEN`, opcional no Compose).
+  Comportamento CONFERIDO no sandbox real:
+  - `X-Idempotency-Key` obrigatória; **mesma chave + mesmo corpo = MESMA order (201)**; outro corpo = 409
+    `idempotency_key_already_used`. Chave de criação determinística: `creationKeyFor(paymentId)` =
+    `moneyx-create-<id>` (repetir a criação após falha devolve a mesma order).
+  - Valores são TEXTO `"49.90"`: `formatAmount` (`BigDecimal.valueOf(cents, 2)`) e `parseAmount`
+    (`longValueExact`: fração de centavo é RECUSADA, nunca arredondada).
+  - Vencimento: só duração (`expiration_time`, ISO-8601 de `Duration.toString()`, ex. `PT29M59S`; 5 min aceito);
+    `date_of_expiration` absoluto → 400 `unsupported_properties`. O MP devolve o instante calculado a partir de
+    quando ELE recebeu o pedido (um pouco depois do nosso).
+  - Status: `action_required`/`waiting_transfer` → `processed`/`accredited` (pago); `canceled`. Cancelar de novo →
+    409 `order_already_canceled`; id inexistente → 404 `order_not_found`. Ids de teste começam com `ORDTST`.
+  - `payer.first_name = "APRO"` (`test-payer-first-name`, SÓ sandbox) aprova sozinho, com atraso VARIÁVEL
+    (medido: 0 a 46 s). `payer.email` é obrigatório no MP (hoje fixo em `payer-email`).
+  - O BR Code do MP traz o txid no campo 62.05 (ex.: `mpqrinter190381238073`, 21 caracteres minúsculos):
+    `PixBrCode.txidOf` lê (conferindo o CRC). A V13 terá de aceitar esse formato.
+  - Erros: `MercadoPagoException(httpStatus, code = errors[0].code, retryable, retryAfter)`. Repetível: timeout,
+    conexão, 429 (com `Retry-After`) e 5xx; 4xx não. Redirecionamento não é seguido (levaria o token). Id da order
+    validado (`[A-Za-z0-9]{1,64}`) antes de entrar na URL. O token nunca vai para mensagem/log/toString, e é
+    MASCARADO se a resposta de erro o ecoar.
+  - Testes: `MercadoPagoClientTest` (servidor HTTP falso, 27) e `MercadoPagoSandboxSmokeTest` (sandbox REAL, desligado;
+    rodar com `-Dmercadopago.smoke=true` e `MERCADOPAGO_ACCESS_TOKEN` na sessão, comando no javadoc).
 - Só o texto é devolvido (sem imagem do QR); o comerciante gera a imagem a partir do `copyPaste`.
 - `POST /v1/sandbox/payments/{id}/pay` simula o pagamento: 200 (PAID); 404 se não existir/for de outro comerciante;
   409 `payment_not_pending` (com `paymentStatus`) ou `payment_expired`. Bloquear para chaves `mx_live_` na Fase 7.
@@ -1069,7 +1104,8 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 7 — Evolução
 
-- [ ] Integrar provedor real em ambiente sandbox.
+- [ ] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
+  descartada pela burocracia de certificado mTLS). Etapas 7a–7e no PROGRESS.md. [x] 7a: porta `PixProvider`. [x] 7b: cliente do Mercado Pago.
 - [ ] Desenvolver dashboard.
 - [ ] Avaliar requisitos legais e regulatórios.
 - [ ] Avaliar viabilidade comercial.
