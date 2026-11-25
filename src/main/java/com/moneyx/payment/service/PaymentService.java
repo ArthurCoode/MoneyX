@@ -17,6 +17,8 @@ import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.provider.PixChargeRequest;
 import com.moneyx.payment.provider.PixProvider;
 import com.moneyx.payment.provider.PixProviderException;
+import com.moneyx.payment.provider.SandboxPixProvider;
+import com.moneyx.payment.exception.SandboxPaymentNotSupportedException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.payment.repository.PaymentSpecifications;
@@ -290,6 +292,9 @@ public class PaymentService {
     public Payment simulatePixPayment(UUID merchantId, UUID paymentId) {
         Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
                 .orElseThrow(PaymentNotFoundException::new);
+        if (!SandboxPixProvider.NAME.equals(payment.getPixProvider())) {
+            throw new SandboxPaymentNotSupportedException(payment.getPixProvider());
+        }
 
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 

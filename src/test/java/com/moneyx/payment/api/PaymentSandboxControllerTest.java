@@ -7,6 +7,7 @@ import com.moneyx.payment.domain.PaymentCurrency;
 import com.moneyx.payment.domain.PaymentFixtures;
 import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.PaymentExpiredException;
+import com.moneyx.payment.exception.SandboxPaymentNotSupportedException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.service.PaymentService;
@@ -86,6 +87,15 @@ class PaymentSandboxControllerTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("payment_not_pending"))
                 .andExpect(jsonPath("$.paymentStatus").value("PAID"));
+    }
+
+    @Test
+    void payReturns409WhenTheChargeWasIssuedByARealProvider() throws Exception {
+        when(service.simulatePixPayment(merchantId, paymentId)).thenThrow(new SandboxPaymentNotSupportedException("mercadopago"));
+
+        mockMvc.perform(post("/v1/sandbox/payments/{id}/pay", paymentId).with(activeMerchant(merchantId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("sandbox_payment_not_supported"));
     }
 
     @Test
