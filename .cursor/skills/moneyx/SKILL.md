@@ -377,7 +377,8 @@ api  →  service  →  repository  →  domain
   Atuais: `api_key_limit_reached`, `last_active_api_key`, `invalid_idempotency_key`, `idempotency_key_reused`,
   `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`,
   `webhook_endpoint_limit_reached`, `invalid_webhook_url`, `webhook_endpoint_deleted`, `webhook_endpoint_unavailable`,
-  `delivery_not_failed`, `rate_limit_exceeded`, `volume_limit_exceeded`. O `detail` é para humanos e pode mudar.
+  `delivery_not_failed`, `rate_limit_exceeded`, `volume_limit_exceeded`, `payment_provider_unavailable` (503),
+  `payment_provider_error` (502). O `detail` é para humanos e pode mudar.
 - Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
   quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
@@ -417,7 +418,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V12. A próxima é `V13__...`.
+- Aplicadas: V1 a V13. A próxima é `V14__...`.
 
 ### Testes
 
@@ -832,7 +833,8 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 - Valor em **centavos (`long`)**; limites **por operação**: mín. R$ 1,00 (100), máx. R$ 100.000,00 (10.000.000).
   Limite acumulado por período: adicionado na Fase 6 (Etapa 6c), ver "Limite acumulado de volume".
-- Estados: `PENDING` → `PAID` | `CANCELED` | `EXPIRED` (todos finais). Reembolso fora da v1.
+- Estados: `PENDING` → `PAID` | `CANCELED` | `EXPIRED` (todos finais). Reembolso fora da v1. Desde a Fase 7 (7c)
+  existe `CREATING` antes de `PENDING` (ver "Criação em três fases").
 - Pagar após o prazo é proibido mesmo se o status ainda for `PENDING` (o job de expiração pode atrasar).
 - Expiração do Pix: padrão 30 min, permitido de 5 min a 24 h.
 - Campos opcionais `description` (255) e `externalReference` (64, conciliação com o pedido do comerciante).
@@ -878,6 +880,32 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   implementação independente (Python).
 - **Sandbox:** recebedor fictício (`SandboxPixProvider.PIX_KEY` etc.; chave do exemplo do manual, não registrada no
   DICT, portanto não pagável de verdade). Na Fase 7 o BR Code (dinâmico) vem do PSP (Mercado Pago).
+- **Criação em três fases (2026-11-24, Fase 7 Etapa 7c-1, V13):** a cobrança pode vir de um PSP chamado pela rede,
+  e nenhuma transação pode ficar aberta esperando a rede (travaria o comerciante). `PaymentService.create` (SEM
+  `@Transactional`; recusa rodar dentro de transação de quem chama; `TransactionTemplate` por fase):
+  1. `begin` (tx): trava o comerciante, reserva a chave, limite de volume, grava `CREATING` (sem `pix`, com
+     `pix_provider`). Repetição com a mesma chave devolve o original.
+  2. `charge` (SEM tx): `PixProvider.createCharge` com o MESMO pedido sempre (`PixChargeRequest` com a DURAÇÃO pedida,
+     `requestedExpiration()`), condição para o PSP devolver a mesma cobrança.
+  3. `complete` (tx): trava o pagamento; se ainda `CREATING`, `attachPixCharge` (→ `PENDING`, ids do PSP, e o
+     vencimento passa a ser o do PSP, se ele informar, desde que a no máximo 10 min do pedido) + `payment.created`.
+     Se outro já concluiu, devolve como está (por isso pode rodar em paralelo: repetição × recuperação → 1 evento).
+  - `PixProviderException(retryable)`: temporária → fica `CREATING`, 503 `payment_provider_unavailable` +
+    `Retry-After` (do PSP, ou 5 s; arredondado para cima); definitiva → `discard` (apaga pagamento e chave) e 502
+    `payment_provider_error`. Exceção inesperada → propaga (500) e fica `CREATING` para a recuperação.
+  - Repetir uma criação `CREATING` retoma as fases 2 e 3 (não há "409 em andamento": o PSP é idempotente).
+  - `CREATING` com prazo vencido → `expireBeforeCharge` (EXPIRED, sem `pix`, SEM evento: ninguém recebeu BR Code) e
+    o provedor não é chamado.
+  - **Recuperação:** `PaymentMaintenanceJobs.resumeStuckCreations` a cada 30 s → `resumeStuckCreations(30 s, 20)`:
+    `CREATING` criados há mais de 30 s (índice parcial da V13), sem trava na busca (a fase 3 trava).
+  - `CREATING` conta no limite de volume. API: status `CREATING` visível, `pix` nulo; `pix.txid` é o do PSP (até 35).
+  - V13: status `CREATING`; `pix_txid` `VARCHAR(35)` `^[A-Za-z0-9]{1,35}$` e opcional, junto com `pix_copy_paste`
+    (CHECKs: os dois juntos; `CREATING` sem; `PENDING/PAID/CANCELED` com; `EXPIRED` livre); `pix_provider`
+    (`sandbox`|`mercadopago`, linhas antigas = sandbox), `provider_order_id` (UNIQUE com o provedor),
+    `provider_payment_id`.
+  - Testes: `PaymentIdempotencyIntegrationTest` (fluxo, recuperação, concorrência ×3), `PaymentTest` (domínio),
+    `PaymentFixtures` (`creating`/`pending` para testes). **Após mudar assinaturas, rodar `mvnw clean`**: a compilação
+    incremental chegou a dizer "nada para compilar" com os testes desatualizados.
 - **Emissor da cobrança (desde 2026-11-24, Fase 7 Etapa 7a):** `payment/provider/PixProvider` (`name()`,
   `createCharge(PixChargeRequest)` → `PixCharge(txid, copyPaste)`), escolhido por `moneyx.pix.provider` (padrão
   `sandbox` = `SandboxPixProvider`, BR Code local). `Payment.create` NÃO gera mais o Pix: `attachPixCharge` (uma vez,
@@ -1106,6 +1134,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 - [ ] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
   descartada pela burocracia de certificado mTLS). Etapas 7a–7e no PROGRESS.md. [x] 7a: porta `PixProvider`. [x] 7b: cliente do Mercado Pago.
+  [x] 7c-1: criação em três fases + recuperação (V13).
 - [ ] Desenvolver dashboard.
 - [ ] Avaliar requisitos legais e regulatórios.
 - [ ] Avaliar viabilidade comercial.
