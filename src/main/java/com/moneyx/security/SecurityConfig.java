@@ -126,6 +126,8 @@ public class SecurityConfig {
                         // seria mascarado como 401, pois o contexto de segurança não é guardado em sessão.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/merchants").permitAll()
+                        // Avisos do PSP (Mercado Pago): sem API Key; autenticados pela assinatura x-signature no controller.
+                        .requestMatchers(HttpMethod.POST, "/v1/provider-webhooks/mercadopago").permitAll()
                         // Actuator (health, metrics, prometheus): só existe na PORTA DE GERENCIAMENTO (8081, ouvindo
                         // apenas em 127.0.0.1). Na porta da API (8080) essas rotas nem existem (404).
                         .requestMatchers(HttpMethod.GET, "/actuator/**").permitAll()
