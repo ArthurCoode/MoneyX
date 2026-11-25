@@ -56,7 +56,21 @@ public class PaymentMaintenanceJobs {
         }
     }
 
-    /** A cada 1 minuto: PENDING vencidos -> EXPIRED. */
+    static final int RECONCILIATION_BATCH = 20;
+
+    /**
+     * A cada 30 s: conciliação com o PSP (Etapa 7d). Consulta os PENDING com cobrança no PSP: pagos → PAID; vencidos são
+     * cancelados no PSP antes de virar EXPIRED. Sem efeito com o provedor sandbox (não há cobranças externas).
+     */
+    @Scheduled(fixedDelay = 30, initialDelay = 15, timeUnit = TimeUnit.SECONDS)
+    public void reconcileProviderCharges() {
+        int changed = RequestIds.runWithNewId("job", () -> payments.reconcileProviderCharges(RECONCILIATION_BATCH));
+        if (changed > 0) {
+            log.info("Reconciled {} payment(s) with the Pix provider", changed);
+        }
+    }
+
+    /** A cada 1 minuto: PENDING vencidos (só cobranças locais) -> EXPIRED. */
     @Scheduled(fixedDelay = 1, initialDelay = 1, timeUnit = TimeUnit.MINUTES)
     public void expireOverduePayments() {
         // Cada execução tem o seu id de correlação (job-xxxxxxxx): as linhas dela podem ser filtradas juntas.
