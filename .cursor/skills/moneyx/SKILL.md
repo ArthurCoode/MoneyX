@@ -418,7 +418,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V13. A próxima é `V14__...`.
+- Aplicadas: V1 a V14. A próxima é `V15__...`.
 
 ### Testes
 
@@ -923,6 +923,45 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
     `sandbox_payment_not_supported`): marcar como pago localmente uma cobrança do MP diria "pago" sem dinheiro.
   - Testes: `MercadoPagoPixProviderTest` (servidor falso), `PixProviderSelectionTest` (contexto Spring pequeno: escolhe
     o provedor e o CRIA; pegou o "No default constructor found" que só a app real mostrou, por haver dois construtores).
+- **Conciliação com o PSP (2026-11-25, Etapa 7d, V14).** Regra central: **quem diz se o Pix foi pago é o PSP**; o
+  MoneyX nunca marca EXPIRED/CANCELED uma cobrança do PSP sem o PSP confirmar que a order foi encerrada.
+  - Porta `PixProvider` ganhou `prepareCharge` (monta o corpo SEM rede), `fetchCharge(orderId)` e
+    `cancelCharge(paymentId, orderId)`, que devolvem `ProviderChargeStatus` com estado neutro: `OPEN`, `IN_PROGRESS`,
+    `PAID`, `CLOSED` (cancelada/recusada), `EXPIRED` (expirada PELO PSP) e `UNKNOWN` (ex.: estorno; nada é decidido).
+    No MP: `processed`=PAID, `action_required`/`created`=OPEN, `processing`=IN_PROGRESS, `canceled`/`failed`=CLOSED,
+    e EXPIRED quando `status_detail=expired` (o MP expira com `canceled/expired`).
+  - **Achado no sandbox (2026-11-25):** order com prazo de **5 min** (`PT5M`) fica `canceled/expired` lá ~5 s depois
+    de criada (a de 30 min e a de 10 min ficam abertas). EXPIRED do PSP vira EXPIRED no MoneyX mesmo ANTES do prazo
+    local (`Payment.expireByProvider`), nunca CANCELED (o lojista não cancelou).
+    Cancelar com 409 (já cancelada/paga/expirada) → consulta a order e devolve o estado real.
+  - **Corpo gravado (V14 `provider_request`):** montado uma vez na criação e reenviado byte a byte em toda repetição
+    (o MP compara o corpo). Resolve o `idempotency_key_already_used` depois de mudança de configuração.
+  - **Rotina a cada 30 s, lote 20** (`reconcileProviderCharges`): PENDING com `provider_order_id` do provedor ATIVO,
+    vencidos primeiro, depois por `provider_checked_at NULLS FIRST` (índice parcial V14). Consulta FORA de transação,
+    decide DENTRO, com a linha trancada. No prazo: PAID → PAID + `payment.paid`; CLOSED → CANCELED (cancelada no painel
+    do PSP); EXPIRED → EXPIRED. Vencido: **cancela no PSP** → CLOSED = EXPIRED; PSP recusou por estar paga = **PAID mesmo depois do prazo**
+    (`Payment.confirmPaidByProvider` não confere o prazo; `markPaid` do sandbox continua conferindo). Erro temporário
+    do PSP interrompe a rodada (nada muda); erro definitivo de uma order só grava a consulta (vai para o fim da fila).
+  - **Valor/referência/order divergentes nunca viram PAID:** log ERROR `payment.provider_mismatch` + métrica
+    `moneyx.payments.reconciliation.mismatches` (revisão manual).
+  - A expiração local (`lockOverduePending`) passou a pegar só cobranças SEM `provider_order_id`.
+  - **Cancelar (lojista):** cobrança do PSP → cancela PRIMEIRO no PSP (fora de transação), grava o resultado (commit) e
+    só então responde: CLOSED → 200 CANCELED; PAID → vira PAID e responde 409 `payment_not_pending`; PSP fora do ar ou
+    ainda processando → **503 `payment_provider_unavailable` + Retry-After**, nada muda. Vencido → 409
+    `payment_expired` sem chamar o PSP (a rotina cancela lá).
+  - **CREATING:** se a repetição traz a order sem BR Code, a exceção traz o estado (`PixProviderException.getExisting`):
+    PAID → `confirmPaidBeforeCharge` (CREATING → PAID com os ids da order e `pix` nulo; a V14 permite PAID sem txid
+    desde que haja `provider_order_id`). CREATING remoto vencido: repete a criação (devolve ou cria a order) e cancela
+    no PSP antes de expirar. PSP fora do ar → continua CREATING (nunca expira às cegas).
+  - Pagamento cujo provedor não é o ATIVO (configuração trocada): nada é decidido (503 no cancelar; rotina ignora).
+- **Aviso (webhook) do Mercado Pago (2026-11-25, Etapa 7e):** `POST /v1/provider-webhooks/mercadopago?data.id=ORD...&type=order`
+  (público na segurança, `@Hidden` no OpenAPI, só existe com `MONEYX_PIX_PROVIDER=mercadopago`). Segredo em
+  `MERCADOPAGO_WEBHOOK_SECRET` (painel do MP → Webhooks); vazio = 404. Assinatura `x-signature: ts=,v1=` validada
+  em tempo constante; manifesto `id:<data.id minúsculo>;request-id:<x-request-id>;ts:<ts>;`, HMAC-SHA256 hex
+  (**[?] manifesto não encontrado nas páginas do MP lidas em 2026-11-25: confirmar com um aviso real**). O aviso é só
+  GATILHO: o corpo é ignorado e o estado vem de um GET no MP (`reconcileProviderOrder`); por isso não há janela de
+  tempo nem deduplicação. Respostas: 200 (inclusive order desconhecida/outro tipo), 401 assinatura inválida, 503 se o
+  MP não responder (o MP repete; espera 22 s, repete a cada 15 min). Teste real pendente: precisa de URL pública HTTPS.
 - **Emissor da cobrança (desde 2026-11-24, Fase 7 Etapa 7a):** `payment/provider/PixProvider` (`name()`,
   `createCharge(PixChargeRequest)` → `PixCharge(txid, copyPaste)`), escolhido por `moneyx.pix.provider` (padrão
   `sandbox` = `SandboxPixProvider`, BR Code local). `Payment.create` NÃO gera mais o Pix: `attachPixCharge` (uma vez,
@@ -1152,6 +1191,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [ ] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
   descartada pela burocracia de certificado mTLS). Etapas 7a–7e no PROGRESS.md. [x] 7a: porta `PixProvider`. [x] 7b: cliente do Mercado Pago.
   [x] 7c-1: criação em três fases + recuperação (V13). [x] 7c-2: provedor Mercado Pago ligado.
+  [x] 7d: conciliação (V14). [x] 7e: aviso do MP com assinatura (teste real com URL pública pendente).
 - [ ] Desenvolver dashboard.
 - [ ] Avaliar requisitos legais e regulatórios.
 - [ ] Avaliar viabilidade comercial.
