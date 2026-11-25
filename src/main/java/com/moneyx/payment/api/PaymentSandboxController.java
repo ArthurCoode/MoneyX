@@ -33,7 +33,7 @@ public class PaymentSandboxController {
 
     /** Simula o pagador pagando o Pix. 200 com o pagamento já PAID. */
     @Operation(operationId = "simulatePixPayment", summary = "Simular o pagamento do Pix",
-            description = "SANDBOX: simula o pagador pagando o Pix. Em produção quem confirma é o PSP.")
+            description = "SANDBOX: simula o pagador pagando o Pix. Só para cobranças do simulador local; uma cobrança de PSP real (ex.: Mercado Pago) responde 409 `sandbox_payment_not_supported`.")
     @ApiResponse(responseCode = "200", description = "Pagamento PAID.")
     @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")

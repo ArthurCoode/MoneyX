@@ -8,6 +8,7 @@ import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.exception.PaymentProviderRejectedException;
 import com.moneyx.payment.exception.PaymentProviderUnavailableException;
+import com.moneyx.payment.exception.SandboxPaymentNotSupportedException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -84,6 +85,11 @@ public class PaymentExceptionHandler {
         ProblemDetail body = withCode(HttpStatus.CONFLICT, ex.getMessage(), "payment_not_pending");
         body.setProperty("paymentStatus", ex.getStatus().name());
         return body;
+    }
+
+    @ExceptionHandler(SandboxPaymentNotSupportedException.class)
+    public ProblemDetail handleSandboxNotSupported(SandboxPaymentNotSupportedException ex) {
+        return withCode(HttpStatus.CONFLICT, ex.getMessage(), "sandbox_payment_not_supported");
     }
 
     @ExceptionHandler(PaymentExpiredException.class)

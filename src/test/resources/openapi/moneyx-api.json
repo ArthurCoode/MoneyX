@@ -1104,7 +1104,7 @@
     },
     "/v1/sandbox/payments/{id}/pay" : {
       "post" : {
-        "description" : "SANDBOX: simula o pagador pagando o Pix. Em produção quem confirma é o PSP.",
+        "description" : "SANDBOX: simula o pagador pagando o Pix. Só para cobranças do simulador local; uma cobrança de PSP real (ex.: Mercado Pago) responde 409 `sandbox_payment_not_supported`.",
         "operationId" : "simulatePixPayment",
         "parameters" : [ {
           "in" : "path",

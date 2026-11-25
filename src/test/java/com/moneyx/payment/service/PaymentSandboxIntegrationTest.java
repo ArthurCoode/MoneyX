@@ -4,6 +4,9 @@ import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.repository.MerchantRepository;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
+import com.moneyx.payment.domain.PixBrCode;
+import com.moneyx.payment.domain.PixCharge;
+import com.moneyx.payment.exception.SandboxPaymentNotSupportedException;
 import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
@@ -109,6 +112,20 @@ class PaymentSandboxIntegrationTest {
         assertThat(paid.getStatus()).isEqualTo(PaymentStatus.PAID);
         assertThat(reload(payment).getStatus()).isEqualTo(PaymentStatus.PAID);
         assertThat(reload(payment).getPaidAt()).isEqualTo(START.plus(Duration.ofMinutes(10)));
+    }
+
+    /** Cobrança de um PSP real só é paga pelo PSP: a simulação local diria "pago" sem dinheiro nenhum no provedor. */
+    @Test
+    void chargeIssuedByARealProviderCannotBePaidThroughTheSandbox() {
+        Payment fromMercadoPago = Payment.create(merchantId, 4990, PaymentCurrency.BRL, null, null, null, "mercadopago", START);
+        String qr = PixBrCode.build("b76aa9c2-2ec4-4110-954e-ebfe34f05b61", "TESTUSER", "Osasco", 4990, "mpqrinter190381238073");
+        fromMercadoPago.attachPixCharge(new PixCharge("mercadopago", "mpqrinter190381238073", qr, "ORDTST01", "PAY01", null), START);
+        paymentRepository.saveAndFlush(fromMercadoPago);
+
+        assertThatThrownBy(() -> service.simulatePixPayment(merchantId, fromMercadoPago.getId()))
+                .isInstanceOf(SandboxPaymentNotSupportedException.class)
+                .hasMessageContaining("mercadopago");
+        assertThat(reload(fromMercadoPago).getStatus()).isEqualTo(PaymentStatus.PENDING);
     }
 
     @Test
