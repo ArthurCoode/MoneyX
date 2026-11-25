@@ -46,6 +46,7 @@ services:
       MONEYX_WEBHOOK_ENCRYPTION_KEY_PREVIOUS: ${MONEYX_WEBHOOK_ENCRYPTION_KEY_PREVIOUS:-}
       # Credencial do Mercado Pago (vazio = só o provedor sandbox funciona).
       MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-}
+      MERCADOPAGO_WEBHOOK_SECRET: ${MERCADOPAGO_WEBHOOK_SECRET:-}
       # Emissor da cobrança Pix: sandbox (padrão, local) ou mercadopago (precisa do token acima).
       MONEYX_PIX_PROVIDER: ${MONEYX_PIX_PROVIDER:-sandbox}
       # SÓ no sandbox do Mercado Pago: "APRO" faz a order ser aprovada sozinha. Vazio em produção.
