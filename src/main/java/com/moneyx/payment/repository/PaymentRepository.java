@@ -77,4 +77,16 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
             WHERE merchant_id = :merchantId AND created_at >= :since AND status <> 'CANCELED'
             """, nativeQuery = true)
     long sumVolumeCreatedSince(UUID merchantId, Instant since);
+
+    /**
+     * Recuperação: pagamentos que ficaram CREATING desde antes de {@code createdBefore}, os mais antigos primeiro.
+     * Sem trava: a conclusão de cada um trava a linha depois (e é segura para rodar em paralelo). Índice parcial da V13.
+     */
+    @Query(value = """
+            SELECT * FROM payments
+            WHERE status = 'CREATING' AND created_at <= :createdBefore
+            ORDER BY created_at
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Payment> findCreatingCreatedBefore(Instant createdBefore, int limit);
 }

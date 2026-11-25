@@ -31,7 +31,7 @@ class SandboxPixProviderTest {
     @Test
     void sandboxChargeEmbedsTheAmountAndTheTxidInTheBrCode() {
         PixCharge charge = provider.createCharge(
-                new PixChargeRequest(UUID.randomUUID(), 4990, Instant.parse("2026-11-24T12:30:00Z"), null));
+                new PixChargeRequest(UUID.randomUUID(), 4990, java.time.Duration.ofMinutes(30), null));
 
         assertThat(charge.copyPaste())
                 .startsWith("000201")

@@ -4,16 +4,21 @@ import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.repository.MerchantRepository;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
+import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
+import com.moneyx.payment.exception.PaymentProviderRejectedException;
+import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.provider.PixProvider;
+import com.moneyx.payment.provider.PixProviderException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.support.MutableClock;
 import com.moneyx.support.TestClockConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -23,6 +28,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -78,6 +85,9 @@ class PaymentIdempotencyIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     @MockitoSpyBean
     private PaymentRepository paymentRepository;
 
@@ -119,7 +129,7 @@ class PaymentIdempotencyIntegrationTest {
         Mockito.verify(pixProvider).createCharge(Mockito.argThat(request ->
                 request.paymentId().equals(first.payment().getId())
                         && request.amount() == ORDER_123.amount()
-                        && request.expiresAt().equals(first.payment().getExpiresAt())));
+                        && request.expiresIn().equals(java.time.Duration.ofMinutes(30))));
         assertThat(first.payment().getPixTxid()).isNotNull();
     }
 
@@ -131,7 +141,7 @@ class PaymentIdempotencyIntegrationTest {
         assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_456))
                 .isInstanceOf(IdempotencyKeyReusedException.class);
 
-        Mockito.verifyNoInteractions(pixProvider);
+        Mockito.verify(pixProvider, Mockito.never()).createCharge(Mockito.any());
     }
 
     @Test
@@ -144,20 +154,170 @@ class PaymentIdempotencyIntegrationTest {
         assertThatThrownBy(() -> service.create(merchantId, "over", ORDER_123))
                 .isInstanceOf(VolumeLimitExceededException.class);
 
-        Mockito.verifyNoInteractions(pixProvider);
+        Mockito.verify(pixProvider, Mockito.never()).createCharge(Mockito.any());
+    }
+
+    // ---------- criação em três fases (Etapa 7c): provedor fora da transação ----------
+
+    private static PixProviderException temporary() {
+        return new PixProviderException(true, "timeout", Duration.ofSeconds(7), "simulated timeout", null);
+    }
+
+    private static PixProviderException permanent() {
+        return new PixProviderException(false, "property_value", null, "simulated rejection", null);
+    }
+
+    private String statusOf(UUID paymentId) {
+        return jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId);
+    }
+
+    private int createdEvents() {
+        Integer count = jdbc.queryForObject(
+                "SELECT count(*) FROM events WHERE merchant_id = ? AND type = 'payment.created'", Integer.class, merchantId);
+        return count == null ? 0 : count;
+    }
+
+    private UUID onlyPaymentId() {
+        return jdbc.queryForObject("SELECT id FROM payments WHERE merchant_id = ?", UUID.class, merchantId);
     }
 
     @Test
-    void providerFailureRollsBackEverythingAndTheKeyCanBeRetried() {
-        Mockito.doThrow(new IllegalStateException("provider down")).when(pixProvider).createCharge(Mockito.any());
+    void temporaryProviderFailureKeepsThePaymentCreatingAndARetryWithTheSameKeyCompletesIt() {
+        Mockito.doThrow(temporary()).when(pixProvider).createCharge(Mockito.any());
 
         assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123))
-                .hasMessage("provider down");
+                .isInstanceOfSatisfying(PaymentProviderUnavailableException.class,
+                        ex -> assertThat(ex.getRetryAfter()).isEqualTo(Duration.ofSeconds(7)));
+
+        UUID paymentId = onlyPaymentId();
+        assertThat(statusOf(paymentId)).isEqualTo("CREATING");
+        assertThat(jdbc.queryForObject("SELECT pix_txid FROM payments WHERE id = ?", String.class, paymentId)).isNull();
+        assertThat(idempotencyKeyRepository.findByMerchantIdAndIdempotencyKey(merchantId, "key-1")).isPresent();
+        assertThat(createdEvents()).isZero();
+
+        Mockito.reset(pixProvider);
+        PaymentCreation retried = service.create(merchantId, "key-1", ORDER_123);
+
+        assertThat(retried.replayed()).isTrue();
+        assertThat(retried.payment().getId()).isEqualTo(paymentId);
+        assertThat(retried.payment().getStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(retried.payment().getPixTxid()).isNotNull();
+        assertThat(paymentCount()).isEqualTo(1);
+        assertThat(createdEvents()).isEqualTo(1);
+        // A retomada pediu a MESMA cobrança (mesmo pagamento e mesmo prazo): é o que faz o PSP devolver a mesma order.
+        Mockito.verify(pixProvider).createCharge(Mockito.argThat(request -> request.paymentId().equals(paymentId)
+                && request.expiresIn().equals(Duration.ofMinutes(30)) && request.amount() == ORDER_123.amount()));
+    }
+
+    @Test
+    void permanentProviderFailureDiscardsThePaymentAndFreesTheKey() {
+        Mockito.doThrow(permanent()).when(pixProvider).createCharge(Mockito.any());
+
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123))
+                .isInstanceOf(PaymentProviderRejectedException.class);
+
         assertThat(paymentCount()).isZero();
         assertThat(idempotencyKeyRepository.findByMerchantIdAndIdempotencyKey(merchantId, "key-1")).isEmpty();
+        assertThat(createdEvents()).isZero();
 
         Mockito.reset(pixProvider);
         assertThat(service.create(merchantId, "key-1", ORDER_123).replayed()).isFalse();
+    }
+
+    @Test
+    void unexpectedProviderErrorPropagatesAndLeavesThePaymentCreatingForRecovery() {
+        Mockito.doThrow(new IllegalStateException("provider bug")).when(pixProvider).createCharge(Mockito.any());
+
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123)).hasMessage("provider bug");
+
+        assertThat(statusOf(onlyPaymentId())).isEqualTo("CREATING");
+    }
+
+    @Test
+    void recoveryCompletesAStuckCreationOnlyAfterTheGracePeriod() {
+        Mockito.doThrow(temporary()).when(pixProvider).createCharge(Mockito.any());
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123))
+                .isInstanceOf(PaymentProviderUnavailableException.class);
+        Mockito.reset(pixProvider);
+        UUID paymentId = onlyPaymentId();
+
+        clock.advance(Duration.ofSeconds(10));
+        assertThat(service.resumeStuckCreations(Duration.ofSeconds(30), 20)).isZero();
+        assertThat(statusOf(paymentId)).isEqualTo("CREATING");
+
+        clock.advance(Duration.ofSeconds(21));
+        assertThat(service.resumeStuckCreations(Duration.ofSeconds(30), 20)).isEqualTo(1);
+        assertThat(statusOf(paymentId)).isEqualTo("PENDING");
+        assertThat(createdEvents()).isEqualTo(1);
+
+        // A repetição do cliente agora só devolve o pagamento pronto, sem chamar o provedor.
+        Mockito.clearInvocations(pixProvider);
+        assertThat(service.create(merchantId, "key-1", ORDER_123).payment().getStatus()).isEqualTo(PaymentStatus.PENDING);
+        Mockito.verify(pixProvider, Mockito.never()).createCharge(Mockito.any());
+    }
+
+    @Test
+    void creationStuckPastItsDeadlineExpiresWithoutCallingTheProvider() {
+        Mockito.doThrow(temporary()).when(pixProvider).createCharge(Mockito.any());
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123))
+                .isInstanceOf(PaymentProviderUnavailableException.class);
+        Mockito.reset(pixProvider);
+        UUID paymentId = onlyPaymentId();
+
+        clock.advance(Duration.ofMinutes(30));
+        assertThat(service.resumeStuckCreations(Duration.ofSeconds(30), 20)).isEqualTo(1);
+
+        assertThat(statusOf(paymentId)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT pix_txid FROM payments WHERE id = ?", String.class, paymentId)).isNull();
+        assertThat(createdEvents()).isZero();
+        Mockito.verify(pixProvider, Mockito.never()).createCharge(Mockito.any());
+        // A repetição do cliente devolve o pagamento expirado (não cria outro, não chama o provedor).
+        PaymentCreation replay = service.create(merchantId, "key-1", ORDER_123);
+        assertThat(replay.payment().getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+        assertThat(paymentCount()).isEqualTo(1);
+        Mockito.verify(pixProvider, Mockito.never()).createCharge(Mockito.any());
+    }
+
+    /** Recuperação e repetições do cliente ao mesmo tempo: um único PENDING e um único payment.created. */
+    @RepeatedTest(3)
+    void concurrentRecoveryAndRetriesCompleteThePaymentExactlyOnce() throws Exception {
+        Mockito.doThrow(temporary()).when(pixProvider).createCharge(Mockito.any());
+        assertThatThrownBy(() -> service.create(merchantId, "key-1", ORDER_123))
+                .isInstanceOf(PaymentProviderUnavailableException.class);
+        Mockito.reset(pixProvider);
+        clock.advance(Duration.ofSeconds(31));
+        UUID paymentId = onlyPaymentId();
+
+        List<Object> outcomes = runConcurrently(8, index -> index % 2 == 0
+                ? service.resumeStuckCreations(Duration.ofSeconds(30), 20)
+                : service.create(merchantId, "key-1", ORDER_123).payment().getStatus());
+
+        assertThat(outcomes).noneMatch(outcome -> outcome instanceof Throwable);
+        assertThat(statusOf(paymentId)).isEqualTo("PENDING");
+        assertThat(createdEvents()).isEqualTo(1);
+        assertThat(paymentCount()).isEqualTo(1);
+    }
+
+    @Test
+    void creatingPaymentsCountTowardsTheVolumeLimit() {
+        CreatePaymentCommand max = new CreatePaymentCommand(10_000_000, PaymentCurrency.BRL, null, null, null);
+        Mockito.doThrow(temporary()).when(pixProvider).createCharge(Mockito.any());
+        assertThatThrownBy(() -> service.create(merchantId, "stuck", max))
+                .isInstanceOf(PaymentProviderUnavailableException.class);
+        Mockito.reset(pixProvider);
+        service.create(merchantId, "max-2", max);
+
+        assertThatThrownBy(() -> service.create(merchantId, "over", ORDER_123))
+                .isInstanceOf(VolumeLimitExceededException.class);
+    }
+
+    @Test
+    void creationRefusesToRunInsideACallerTransaction() {
+        assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(
+                status -> service.create(merchantId, "key-1", ORDER_123)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must not run inside a transaction");
+        assertThat(paymentCount()).isZero();
     }
 
     // ---------- comportamento básico ----------

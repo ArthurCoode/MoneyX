@@ -239,19 +239,28 @@ class PaymentEventsIntegrationTest {
         assertThat(eventsOf(payment)).extracting(Event::getType).containsExactly(EventType.PAYMENT_CREATED);
     }
 
+    /**
+     * Desde a Etapa 7c o payment.created é gravado na FASE 3 (junto com CREATING -> PENDING). Se ele falhar, a fase 3
+     * inteira é desfeita: o pagamento continua CREATING, sem cobrança e sem evento. A repetição com a mesma chave
+     * retoma a criação e grava o evento UMA vez.
+     */
     @Test
-    void ifTheCreationFailsAfterTheEventNeitherThePaymentNorTheEventExist() {
+    void ifTheCreatedEventCannotBeRecordedThePaymentStaysCreatingAndTheRetryCompletesIt() {
         doThrow(new IllegalStateException("simulated failure"))
                 .when(eventRecorder).record(eq(EventType.PAYMENT_CREATED), any(), any());
 
         assertThatThrownBy(() -> paymentService.create(merchantId, "key-1", ORDER)).hasMessage("simulated failure");
         Mockito.reset(eventRecorder);
 
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM payments WHERE merchant_id = ?", Integer.class, merchantId))
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE merchant_id = ?", String.class, merchantId))
+                .isEqualTo("CREATING");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM events WHERE merchant_id = ?", Integer.class, merchantId))
                 .isZero();
-        // A chave não ficou consumida: repetir funciona e cria o pagamento (com o seu evento).
-        Payment payment = create("key-1");
-        assertThat(eventsOf(payment)).extracting(Event::getType).containsExactly(EventType.PAYMENT_CREATED);
+
+        PaymentCreation retried = paymentService.create(merchantId, "key-1", ORDER);
+        assertThat(retried.replayed()).isTrue();
+        assertThat(retried.payment().getStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(eventsOf(retried.payment())).extracting(Event::getType).containsExactly(EventType.PAYMENT_CREATED);
     }
 
     @Test

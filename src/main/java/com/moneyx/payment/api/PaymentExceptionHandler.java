@@ -6,8 +6,12 @@ import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
+import com.moneyx.payment.exception.PaymentProviderRejectedException;
+import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -45,6 +49,24 @@ public class PaymentExceptionHandler {
         body.setProperty("remaining", ex.getRemaining());
         body.setProperty("resetsAt", ex.getResetsAt());
         return body;
+    }
+
+    /**
+     * 503: o provedor de Pix está fora do ar. O pagamento existe (CREATING); repetir com a MESMA Idempotency-Key retoma
+     * a criação. Retry-After em segundos, arredondado para cima.
+     */
+    @ExceptionHandler(PaymentProviderUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleProviderUnavailable(PaymentProviderUnavailableException ex) {
+        long seconds = Math.max(1, (ex.getRetryAfter().toMillis() + 999) / 1000);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(seconds))
+                .body(withCode(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), "payment_provider_unavailable"));
+    }
+
+    /** 502: o provedor recusou a cobrança. Nada foi criado; a chave ficou livre. */
+    @ExceptionHandler(PaymentProviderRejectedException.class)
+    public ProblemDetail handleProviderRejected(PaymentProviderRejectedException ex) {
+        return withCode(HttpStatus.BAD_GATEWAY, ex.getMessage(), "payment_provider_error");
     }
 
     @ExceptionHandler(InvalidCursorException.class)

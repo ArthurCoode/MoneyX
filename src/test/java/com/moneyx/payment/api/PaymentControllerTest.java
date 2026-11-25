@@ -4,8 +4,11 @@ import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.merchant.service.MerchantService;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
+import com.moneyx.payment.domain.PaymentFixtures;
 import com.moneyx.payment.exception.IdempotencyKeyReusedException;
 import com.moneyx.payment.exception.InvalidIdempotencyKeyException;
+import com.moneyx.payment.exception.PaymentProviderRejectedException;
+import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
 import com.moneyx.payment.service.CreatePaymentCommand;
 import com.moneyx.payment.service.PaymentCreation;
@@ -68,7 +71,7 @@ class PaymentControllerTest {
     private final UUID merchantId = UUID.randomUUID();
 
     private Payment payment() {
-        return Payment.create(merchantId, 4990, PaymentCurrency.BRL, "Pedido 123", "order-123", null,
+        return PaymentFixtures.pending(merchantId, 4990, "Pedido 123", "order-123", null,
                 Instant.parse("2026-11-19T12:00:00Z"));
     }
 
@@ -161,6 +164,49 @@ class PaymentControllerTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(422))
                 .andExpect(jsonPath("$.code").value("idempotency_key_reused"));
+    }
+
+    @Test
+    void returns503WithRetryAfterRoundedUpWhenTheProviderIsUnavailable() throws Exception {
+        when(service.create(eq(merchantId), eq("key-1"), any()))
+                .thenThrow(new PaymentProviderUnavailableException(java.time.Duration.ofMillis(2_100)));
+
+        postPayment("key-1", VALID_BODY)
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(header().string("Retry-After", "3"))
+                .andExpect(jsonPath("$.code").value("payment_provider_unavailable"));
+    }
+
+    @Test
+    void returns503WithADefaultRetryAfterWhenTheProviderGaveNone() throws Exception {
+        when(service.create(eq(merchantId), eq("key-1"), any())).thenThrow(new PaymentProviderUnavailableException(null));
+
+        postPayment("key-1", VALID_BODY)
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "5"));
+    }
+
+    @Test
+    void returns502WhenTheProviderRejectsTheCharge() throws Exception {
+        when(service.create(eq(merchantId), eq("key-1"), any())).thenThrow(new PaymentProviderRejectedException());
+
+        postPayment("key-1", VALID_BODY)
+                .andExpect(status().isBadGateway())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("payment_provider_error"));
+    }
+
+    /** Pagamento ainda CREATING (sem cobrança): status CREATING e "pix" nulo. */
+    @Test
+    void creatingPaymentIsReturnedWithoutPix() throws Exception {
+        Payment creating = PaymentFixtures.creating(merchantId, 4990, null, null, null, Instant.parse("2026-11-19T12:00:00Z"));
+        when(service.create(eq(merchantId), eq("key-1"), any())).thenReturn(new PaymentCreation(creating, true));
+
+        postPayment("key-1", VALID_BODY)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("CREATING"))
+                .andExpect(jsonPath("$.pix").doesNotExist());
     }
 
     @Test

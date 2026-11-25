@@ -55,6 +55,8 @@ public class PaymentController {
     @ApiResponse(responseCode = "201", description = "Pagamento criado (ou devolvido, se for repetição).", headers = @Header(name = "Idempotent-Replayed", description = "true quando a resposta é de uma repetição.", schema = @io.swagger.v3.oas.annotations.media.Schema(types = {"boolean"})))
     @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
     @ApiResponse(responseCode = "422", ref = "#/components/responses/UnprocessableContent")
+    @ApiResponse(responseCode = "502", ref = "#/components/responses/BadGateway")
+    @ApiResponse(responseCode = "503", ref = "#/components/responses/ServiceUnavailable")
     @PostMapping
     public ResponseEntity<PaymentView> create(
             @AuthenticationPrincipal AuthenticatedMerchant principal,

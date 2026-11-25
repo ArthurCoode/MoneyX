@@ -13,7 +13,8 @@ import java.util.UUID;
  *
  * "pix" agrupa os dados para o pagador (como o "point_of_interaction.transaction_data" do Mercado Pago):
  *   copyPaste: BR Code ("Pix copia e cola"). O comerciante o exibe como texto e/ou gera a imagem do QR code.
- *   txid:      identificador da cobrança Pix.
+ *   txid:      identificador da cobrança Pix (campo 62.05 do BR Code; o formato é do PSP, até 35 caracteres).
+ * "pix" é null enquanto o pagamento está CREATING (a cobrança ainda não foi emitida pelo provedor).
  */
 public record PaymentView(
         UUID id,
@@ -38,7 +39,8 @@ public record PaymentView(
                 payment.getDescription(),
                 payment.getExternalReference(),
                 payment.getExpiresAt(),
-                new Pix(payment.getPixTxid(), payment.getPixCopyPaste()),
+                // CREATING (e EXPIRED antes da cobrança) ainda não têm BR Code.
+                payment.getPixTxid() == null ? null : new Pix(payment.getPixTxid(), payment.getPixCopyPaste()),
                 payment.getPaidAt(),
                 payment.getCanceledAt(),
                 payment.getCreatedAt()

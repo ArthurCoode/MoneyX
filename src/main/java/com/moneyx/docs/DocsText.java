@@ -24,6 +24,7 @@ final class DocsText {
             |---|---|
             | Valores | Sempre em **centavos**: R$ 49,90 = `4990` |
             | Idempotência | `POST /v1/payments` exige o header `Idempotency-Key`. Repetir a mesma chave devolve o mesmo pagamento |
+            | Status | `CREATING` (cobrança sendo emitida pelo provedor; `pix` nulo) → `PENDING` → `PAID`, `CANCELED` ou `EXPIRED`. Provedor fora do ar: **503** e o pagamento fica `CREATING`; repita com a mesma chave |
             | Paginação | `?limit=10&startingAfter=<id>` e a resposta traz `data` + `hasMore` |
             | Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |
             | Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |

@@ -21,52 +21,132 @@ class PaymentTest {
     private static final Instant NOW = Instant.parse("2026-11-19T12:00:00Z");
 
     private static Payment pending() {
-        return Payment.create(UUID.randomUUID(), 4990, PaymentCurrency.BRL, "Pedido 123", "order-123", null, NOW);
+        return PaymentFixtures.pending(UUID.randomUUID(), 4990, "Pedido 123", "order-123", null, NOW);
     }
 
-    // ---------- criação ----------
+    private static Payment creating() {
+        return PaymentFixtures.creating(UUID.randomUUID(), 4990, "Pedido 123", "order-123", null, NOW);
+    }
+
+    // ---------- criação em duas fases: CREATING -> PENDING (cobrança anexada) ----------
 
     @Nested
     class PixChargeAttachment {
 
-        private final PixCharge charge = new PixCharge("TXID0000000000000000000001", "000201...6304ABCD");
+        private static final Instant LATER = NOW.plusSeconds(2);
+
+        private PixCharge sandboxCharge() {
+            return PixCharge.local("sandbox", "TXID0000000000000000000001", "000201...6304ABCD");
+        }
+
+        private PixCharge pspCharge(Instant pspExpiresAt) {
+            return new PixCharge("sandbox", "mpqrinter190381238073", "000201...6304ABCD", "ORDTST01", "PAY01", pspExpiresAt);
+        }
 
         @Test
-        void newPaymentHasNoChargeUntilTheProviderIssuesOne() {
-            Payment payment = pending();
+        void newPaymentStartsCreatingWithoutCharge() {
+            Payment payment = creating();
 
+            assertThat(payment.getStatus()).isEqualTo(PaymentStatus.CREATING);
+            assertThat(payment.getStatus().isFinal()).isFalse();
             assertThat(payment.getPixTxid()).isNull();
             assertThat(payment.getPixCopyPaste()).isNull();
+            assertThat(payment.getPixProvider()).isEqualTo("sandbox");
+            assertThat(payment.requestedExpiration()).isEqualTo(Duration.ofMinutes(30));
+        }
 
-            payment.attachPixCharge(charge);
+        @Test
+        void attachingTheChargeMakesThePaymentPendingAndKeepsTheProviderIds() {
+            Payment payment = creating();
 
-            assertThat(payment.getPixTxid()).isEqualTo(charge.txid());
-            assertThat(payment.getPixCopyPaste()).isEqualTo(charge.copyPaste());
+            payment.attachPixCharge(pspCharge(null), LATER);
+
+            assertThat(payment.getStatus()).isEqualTo(PaymentStatus.PENDING);
+            assertThat(payment.getPixTxid()).isEqualTo("mpqrinter190381238073");
+            assertThat(payment.getProviderOrderId()).isEqualTo("ORDTST01");
+            assertThat(payment.getProviderPaymentId()).isEqualTo("PAY01");
+            assertThat(payment.getUpdatedAt()).isEqualTo(LATER);
+            assertThat(payment.getExpiresAt()).isEqualTo(NOW.plus(Duration.ofMinutes(30)));   // PSP não informou
+        }
+
+        /** O PSP conta o prazo a partir de quando recebeu o pedido: o vencimento dele passa a valer. */
+        @Test
+        void providerExpirationReplacesTheRequestedOne() {
+            Payment payment = creating();
+            Instant pspExpiresAt = NOW.plus(Duration.ofMinutes(30)).plusMillis(1_800);
+
+            payment.attachPixCharge(pspCharge(pspExpiresAt), LATER);
+
+            assertThat(payment.getExpiresAt()).isEqualTo(pspExpiresAt);
+        }
+
+        @Test
+        void providerExpirationTooFarFromTheRequestedOneIsRejected() {
+            Instant requested = NOW.plus(Duration.ofMinutes(30));
+            Duration drift = Payment.MAX_PROVIDER_EXPIRATION_DRIFT;
+
+            assertThatThrownBy(() -> creating().attachPixCharge(pspCharge(requested.plus(drift).plusSeconds(1)), LATER))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> creating().attachPixCharge(pspCharge(requested.minus(drift).minusSeconds(1)), LATER))
+                    .isInstanceOf(IllegalStateException.class);
+            Payment atTheLimit = creating();
+            atTheLimit.attachPixCharge(pspCharge(requested.plus(drift)), LATER);
+            assertThat(atTheLimit.getExpiresAt()).isEqualTo(requested.plus(drift));
         }
 
         @Test
         void chargeIsAttachedOnlyOnce() {
-            Payment payment = pending();
-            payment.attachPixCharge(charge);
+            Payment payment = creating();
+            payment.attachPixCharge(sandboxCharge(), LATER);
 
-            assertThatThrownBy(() -> payment.attachPixCharge(new PixCharge("OTHER", "000201...")))
+            assertThatThrownBy(() -> payment.attachPixCharge(PixCharge.local("sandbox", "OTHER", "000201..."), LATER))
                     .isInstanceOf(IllegalStateException.class);
-            assertThat(payment.getPixTxid()).isEqualTo(charge.txid());
+            assertThat(payment.getPixTxid()).isEqualTo(sandboxCharge().txid());
         }
 
         @Test
-        void onlyPendingPaymentsReceiveACharge() {
-            Payment payment = pending();
-            payment.cancel(NOW);
-
-            assertThatThrownBy(() -> payment.attachPixCharge(charge)).isInstanceOf(IllegalStateException.class);
+        void chargeFromAnotherProviderIsRejected() {
+            assertThatThrownBy(() -> creating().attachPixCharge(PixCharge.local("mercadopago", "X1", "000201..."), LATER))
+                    .isInstanceOf(IllegalStateException.class);
         }
 
         @Test
-        void chargeRequiresTxidAndCopyPaste() {
-            assertThatThrownBy(() -> new PixCharge(null, "x")).isInstanceOf(NullPointerException.class);
-            assertThatThrownBy(() -> new PixCharge(" ", "x")).isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> new PixCharge("x", "")).isInstanceOf(IllegalArgumentException.class);
+        void creatingPaymentCannotBePaidCanceledOrExpiredLikeAPendingOne() {
+            Payment payment = creating();
+
+            assertThatThrownBy(() -> payment.markPaid(LATER)).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> payment.cancel(LATER)).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> payment.expire(NOW.plus(Duration.ofHours(1)))).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void creatingPaymentExpiresOnlyAfterItsDeadline() {
+            Payment payment = creating();
+
+            assertThatThrownBy(() -> payment.expireBeforeCharge(NOW.plus(Duration.ofMinutes(29))))
+                    .isInstanceOf(IllegalStateException.class);
+            payment.expireBeforeCharge(NOW.plus(Duration.ofMinutes(30)));
+
+            assertThat(payment.getStatus()).isEqualTo(PaymentStatus.EXPIRED);
+            assertThat(payment.getPixTxid()).isNull();
+            assertThatThrownBy(() -> payment.attachPixCharge(sandboxCharge(), LATER)).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void pendingPaymentCannotExpireBeforeCharge() {
+            assertThatThrownBy(() -> pending().expireBeforeCharge(NOW.plus(Duration.ofHours(1))))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void chargeRequiresProviderTxidAndCopyPaste() {
+            assertThatThrownBy(() -> PixCharge.local("sandbox", null, "x")).isInstanceOf(NullPointerException.class);
+            assertThatThrownBy(() -> PixCharge.local(null, "x", "x")).isInstanceOf(NullPointerException.class);
+            assertThatThrownBy(() -> PixCharge.local("sandbox", " ", "x")).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> PixCharge.local("sandbox", "x", "")).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> PixCharge.local("sandbox", "a-b", "x")).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> PixCharge.local("sandbox", "a".repeat(36), "x")).isInstanceOf(IllegalArgumentException.class);
+            assertThat(PixCharge.local("sandbox", "a".repeat(35), "x").txid()).hasSize(35);
         }
     }
 
@@ -116,8 +196,7 @@ class PaymentTest {
 
         @Test
         void optionalTextsAreTrimmedAndBlankBecomesNull() {
-            Payment payment = Payment.create(UUID.randomUUID(), 4990, PaymentCurrency.BRL,
-                    "  Pedido 123  ", "   ", null, NOW);
+            Payment payment = PaymentFixtures.creating(UUID.randomUUID(), 4990, "  Pedido 123  ", "   ", null, NOW);
 
             assertThat(payment.getDescription()).isEqualTo("Pedido 123");
             assertThat(payment.getExternalReference()).isNull();
@@ -125,20 +204,18 @@ class PaymentTest {
 
         @Test
         void rejectsTextsLongerThanTheColumn() {
-            assertThatThrownBy(() -> Payment.create(UUID.randomUUID(), 4990, PaymentCurrency.BRL,
-                    "x".repeat(256), null, null, NOW))
+            assertThatThrownBy(() -> PaymentFixtures.creating(UUID.randomUUID(), 4990, "x".repeat(256), null, null, NOW))
                     .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> Payment.create(UUID.randomUUID(), 4990, PaymentCurrency.BRL,
-                    null, "x".repeat(65), null, NOW))
+            assertThatThrownBy(() -> PaymentFixtures.creating(UUID.randomUUID(), 4990, null, "x".repeat(65), null, NOW))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
         private Payment create(long amount) {
-            return Payment.create(UUID.randomUUID(), amount, PaymentCurrency.BRL, null, null, null, NOW);
+            return PaymentFixtures.creating(UUID.randomUUID(), amount, null, null, null, NOW);
         }
 
         private Payment createExpiringIn(Duration expiresIn) {
-            return Payment.create(UUID.randomUUID(), 4990, PaymentCurrency.BRL, null, null, expiresIn, NOW);
+            return PaymentFixtures.creating(UUID.randomUUID(), 4990, null, null, expiresIn, NOW);
         }
     }
 

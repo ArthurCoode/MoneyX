@@ -72,4 +72,12 @@ public interface PaymentIdempotencyKeyRepository extends JpaRepository<PaymentId
             WHERE k.id = batch.id
             """, nativeQuery = true)
     int deleteExpired(Instant now, int limit);
+
+    /**
+     * Libera a chave de um pagamento descartado (o PSP recusou a cobrança): o cliente pode repetir com a mesma chave.
+     * Comando direto (sem carregar entidades); roda na transação de quem chama.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query(value = "DELETE FROM payment_idempotency_keys WHERE payment_id = :paymentId", nativeQuery = true)
+    int deleteByPaymentId(UUID paymentId);
 }

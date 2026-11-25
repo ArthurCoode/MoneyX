@@ -1,6 +1,16 @@
 {
   "components" : {
     "responses" : {
+      "BadGateway" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "O provedor de Pix recusou a cobrança (`payment_provider_error`). Nada foi criado e a Idempotency-Key ficou livre."
+      },
       "BadRequest" : {
         "content" : {
           "application/problem+json" : {
@@ -40,6 +50,25 @@
           }
         },
         "description" : "Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."
+      },
+      "ServiceUnavailable" : {
+        "content" : {
+          "application/problem+json" : {
+            "schema" : {
+              "$ref" : "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description" : "O provedor de Pix está fora do ar (`payment_provider_unavailable`). O pagamento existe com status `CREATING`: repita com a MESMA Idempotency-Key (ou consulte depois) para recebê-lo pronto.",
+        "headers" : {
+          "Retry-After" : {
+            "description" : "Segundos até tentar de novo.",
+            "schema" : {
+              "format" : "int32",
+              "type" : "integer"
+            }
+          }
+        }
       },
       "TooManyRequests" : {
         "content" : {
@@ -613,7 +642,7 @@
     }
   },
   "info" : {
-    "description" : "API de pagamentos Pix do **MoneyX**, em ambiente **sandbox**: dados de teste, nenhum dinheiro real.\n\n#### Primeiros passos\n1. **Cadastre-se** em `POST /v1/merchants` e guarde a API Key da resposta. Ela aparece uma única vez.\n2. Clique em **Authorize** e cole a chave (`mx_test_...`).\n3. **Crie um pagamento** em `POST /v1/payments` e mostre o `pix.copyPaste` ao pagador.\n4. **Simule o pagamento** em `POST /v1/sandbox/payments/{id}/pay`.\n5. Para **receber avisos**, cadastre uma URL em `POST /v1/webhook-endpoints` (veja *Webhooks*, no fim da página).\n\n#### Regras gerais\n| Tema | Como funciona |\n|---|---|\n| Valores | Sempre em **centavos**: R$ 49,90 = `4990` |\n| Idempotência | `POST /v1/payments` exige o header `Idempotency-Key`. Repetir a mesma chave devolve o mesmo pagamento |\n| Paginação | `?limit=10&startingAfter=<id>` e a resposta traz `data` + `hasMore` |\n| Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |\n| Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |\n| Retenção | Eventos e entregas de webhook ficam disponíveis por **30 dias**; depois, **404**. Pagamentos não expiram da API |\n| Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |\n| Volume | Pagamentos criados e não cancelados somam no máximo **R$ 200 mil por dia** e **R$ 2 milhões por mês** (horário de Brasília). Acima disso, **422** `volume_limit_exceeded` |\n| Suporte | Toda resposta traz o header `X-Request-Id` (e os erros, o campo `requestId`). Informe-o ao suporte. Você pode enviar o seu próprio (até 64 caracteres `A-Z a-z 0-9 . _ -`) |\n",
+    "description" : "API de pagamentos Pix do **MoneyX**, em ambiente **sandbox**: dados de teste, nenhum dinheiro real.\n\n#### Primeiros passos\n1. **Cadastre-se** em `POST /v1/merchants` e guarde a API Key da resposta. Ela aparece uma única vez.\n2. Clique em **Authorize** e cole a chave (`mx_test_...`).\n3. **Crie um pagamento** em `POST /v1/payments` e mostre o `pix.copyPaste` ao pagador.\n4. **Simule o pagamento** em `POST /v1/sandbox/payments/{id}/pay`.\n5. Para **receber avisos**, cadastre uma URL em `POST /v1/webhook-endpoints` (veja *Webhooks*, no fim da página).\n\n#### Regras gerais\n| Tema | Como funciona |\n|---|---|\n| Valores | Sempre em **centavos**: R$ 49,90 = `4990` |\n| Idempotência | `POST /v1/payments` exige o header `Idempotency-Key`. Repetir a mesma chave devolve o mesmo pagamento |\n| Status | `CREATING` (cobrança sendo emitida pelo provedor; `pix` nulo) → `PENDING` → `PAID`, `CANCELED` ou `EXPIRED`. Provedor fora do ar: **503** e o pagamento fica `CREATING`; repita com a mesma chave |\n| Paginação | `?limit=10&startingAfter=<id>` e a resposta traz `data` + `hasMore` |\n| Erros | Formato Problem Details. Decida pelo campo `code`; o `detail` é só para leitura |\n| Isolamento | Recurso de outro comerciante responde **404**, como se não existisse |\n| Retenção | Eventos e entregas de webhook ficam disponíveis por **30 dias**; depois, **404**. Pagamentos não expiram da API |\n| Limite | Cadastro: 5 tentativas por IP e +1 a cada 2 min. Acima disso, **429** com `Retry-After` |\n| Volume | Pagamentos criados e não cancelados somam no máximo **R$ 200 mil por dia** e **R$ 2 milhões por mês** (horário de Brasília). Acima disso, **422** `volume_limit_exceeded` |\n| Suporte | Toda resposta traz o header `X-Request-Id` (e os erros, o campo `requestId`). Informe-o ao suporte. Você pode enviar o seu próprio (até 64 caracteres `A-Z a-z 0-9 . _ -`) |\n",
     "title" : "MoneyX API",
     "version" : "v1"
   },
@@ -891,7 +920,7 @@
           "name" : "status",
           "required" : false,
           "schema" : {
-            "enum" : [ "PENDING", "PAID", "CANCELED", "EXPIRED" ],
+            "enum" : [ "CREATING", "PENDING", "PAID", "CANCELED", "EXPIRED" ],
             "type" : "string"
           }
         }, {
@@ -979,6 +1008,12 @@
           },
           "422" : {
             "$ref" : "#/components/responses/UnprocessableContent"
+          },
+          "502" : {
+            "$ref" : "#/components/responses/BadGateway"
+          },
+          "503" : {
+            "$ref" : "#/components/responses/ServiceUnavailable"
           }
         },
         "summary" : "Criar pagamento Pix",

@@ -1,6 +1,7 @@
 package com.moneyx.payment.job;
 
 import com.moneyx.payment.service.PaymentMaintenanceService;
+import com.moneyx.payment.service.PaymentService;
 import com.moneyx.shared.observability.RequestIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -29,10 +31,29 @@ public class PaymentMaintenanceJobs {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentMaintenanceJobs.class);
 
-    private final PaymentMaintenanceService maintenance;
+    /** Só retoma criações paradas há mais que isso (a requisição original pode ainda estar em andamento). */
+    static final Duration STUCK_CREATION_GRACE = Duration.ofSeconds(30);
+    static final int STUCK_CREATION_BATCH = 20;
 
-    public PaymentMaintenanceJobs(PaymentMaintenanceService maintenance) {
+    private final PaymentMaintenanceService maintenance;
+    private final PaymentService payments;
+
+    public PaymentMaintenanceJobs(PaymentMaintenanceService maintenance, PaymentService payments) {
         this.maintenance = maintenance;
+        this.payments = payments;
+    }
+
+    /**
+     * A cada 30 s: retoma pagamentos parados em CREATING (o provedor de Pix estava fora do ar ou a aplicação caiu
+     * entre as fases da criação). Conclui (PENDING) ou, se o prazo venceu, expira.
+     */
+    @Scheduled(fixedDelay = 30, initialDelay = 30, timeUnit = TimeUnit.SECONDS)
+    public void resumeStuckCreations() {
+        int resolved = RequestIds.runWithNewId("job",
+                () -> payments.resumeStuckCreations(STUCK_CREATION_GRACE, STUCK_CREATION_BATCH));
+        if (resolved > 0) {
+            log.info("Resolved {} payment creation(s) stuck in CREATING", resolved);
+        }
     }
 
     /** A cada 1 minuto: PENDING vencidos -> EXPIRED. */
