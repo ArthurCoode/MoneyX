@@ -229,7 +229,8 @@ api  →  service  →  repository  →  domain
 
 - `security/SecurityConfig` define a única `SecurityFilterChain`: stateless, CSRF/httpBasic/formLogin/logout
   desabilitados. Rotas públicas: `POST /v1/merchants`, a documentação (`/v3/api-docs`, `/swagger-ui`), `GET /actuator/**` (que só
-  existe na porta de gerenciamento 8081, em 127.0.0.1) e o despacho interno `ERROR`.
+  existe na porta de gerenciamento 8081, em 127.0.0.1), o despacho interno `ERROR` e, desde a Etapa 7e,
+  `POST /v1/provider-webhooks/mercadopago` (aviso do MP: sem API Key, autenticado pela assinatura `x-signature` no controller).
   Todo o resto exige a autoridade `ACTIVE_MERCHANT`.
 - `security/ApiKeyAuthenticationFilter` (não é `@Component`, é instanciado no `SecurityConfig`):
   sem header → segue anônimo (rota protegida → 401); header inválido → 401 imediato, mesmo em rota pública;
@@ -635,6 +636,19 @@ ação. **Nunca** inclui o valor na mensagem. Nova configuração obrigatória: 
 app real sem a senha: falha sem Hikari/Flyway). Os testes usam uma chave fixa de teste (`src/test/resources/config/application.properties`)
 e só precisam de `POSTGRES_PASSWORD`.
 
+**Provedor Pix (Fase 7), todas opcionais:**
+
+| Variável | Uso |
+|---|---|
+| `MONEYX_PIX_PROVIDER` | `sandbox` (padrão, BR Code local) ou `mercadopago` |
+| `MERCADOPAGO_ACCESS_TOKEN` | credencial do MP (no `.env`); obrigatória só com `mercadopago` (sem ela a app não sobe) |
+| `MERCADOPAGO_WEBHOOK_SECRET` | assinatura secreta dos avisos do MP; vazia = `POST /v1/provider-webhooks/mercadopago` responde 404 |
+| `MONEYX_PIX_MERCADOPAGO_TEST_PAYER_FIRST_NAME` | SÓ no sandbox: `APRO` faz o MP aprovar sozinho |
+| `MONEYX_PIX_MERCADOPAGO_BASE_URL` | raiz da API (testes: endereço inválido simula o MP fora do ar) |
+
+Para usar o MP sem tocar no `.env` (Git Bash): `MONEYX_PIX_PROVIDER=mercadopago docker compose up -d --build app`.
+Para voltar ao normal: `docker compose up -d app`.
+
 ### Executar aplicação
 
 Forma recomendada (sem carregar variáveis na sessão): `docker compose up -d --build`.
@@ -834,8 +848,10 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - Valor em **centavos (`long`)**; limites **por operação**: mín. R$ 1,00 (100), máx. R$ 100.000,00 (10.000.000).
   Limite acumulado por período: adicionado na Fase 6 (Etapa 6c), ver "Limite acumulado de volume".
 - Estados: `PENDING` → `PAID` | `CANCELED` | `EXPIRED` (todos finais). Reembolso fora da v1. Desde a Fase 7 (7c)
-  existe `CREATING` antes de `PENDING` (ver "Criação em três fases").
-- Pagar após o prazo é proibido mesmo se o status ainda for `PENDING` (o job de expiração pode atrasar).
+  existe `CREATING` antes de `PENDING` (ver "Criação em três fases"). Transições vindas do PSP (7d): `PENDING` → `PAID`
+  (`confirmPaidByProvider`) ou `EXPIRED` (`expireByProvider`) e `CREATING` → `PAID` (`confirmPaidBeforeCharge`).
+- Pagar após o prazo é proibido mesmo se o status ainda for `PENDING` (o job de expiração pode atrasar). **Exceção
+  (7d):** confirmação do PSP. Se o PSP diz que recebeu o Pix, o pagamento vira PAID mesmo depois do prazo do MoneyX.
 - Expiração do Pix: padrão 30 min, permitido de 5 min a 24 h.
 - Campos opcionais `description` (255) e `externalReference` (64, conciliação com o pedido do comerciante).
 - Moeda: apenas `BRL` (enum `PaymentCurrency`), campo modelado desde já.
@@ -857,8 +873,9 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   FK `payment_id` é `DEFERRABLE INITIALLY DEFERRED` (a chave é gravada antes do pagamento).
 - Só sucessos consomem a chave: erro de validação ou falha fazem rollback e o cliente pode repetir com a mesma chave.
 - Replay devolve o estado ATUAL do pagamento (não a resposta original byte a byte, como o Stripe).
-- **Reavaliar na Fase 7:** com provedor Pix real (chamada externa fora da transação) será preciso estado
-  `IN_PROGRESS`, 409 e recuperação (padrão de "recovery points" do Stripe).
+- **Resolvido na Fase 7 (7c-1):** com o PSP chamado fora da transação, o pagamento nasce `CREATING` e uma repetição
+  com a mesma chave retoma a criação (503 enquanto o PSP estiver fora). A rotina de recuperação conclui sozinha (ver
+  "Criação em três fases"). Não foi preciso devolver 409 "em processamento".
 - Comprovado por mutação: sem o `WHERE` de expiração ou sem a checagem do fingerprint, os testes falham.
 
 #### Etapas
@@ -969,9 +986,10 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   Idempotency-Key E do limite de volume, antes do `save` (com um PSP real cada chamada cria uma cobrança de verdade).
   Falha do provedor desfaz tudo e a chave pode ser repetida. Testado com espião do provedor em
   `PaymentIdempotencyIntegrationTest` (repetição, chave com outro corpo e recusa por volume nunca chamam o provedor).
-- **Cliente do Mercado Pago (2026-11-24, Etapa 7b; ainda NÃO ligado como provedor, isso é a 7c):**
+- **Cliente do Mercado Pago (2026-11-24, Etapa 7b; ligado como provedor na 7c-2):**
   `payment/provider/mercadopago/MercadoPagoClient` (API de **Orders**, `HttpClient` do JDK + Jackson, sem SDK):
-  `createPixOrder` (`POST /v1/orders`), `getOrder`, `cancelOrder` (`POST /v1/orders/{id}/cancel`). Configuração
+  `createPixOrder` (`POST /v1/orders`; desde a 7d também com o corpo já montado por `orderBody`), `getOrder`,
+  `cancelOrder` (`POST /v1/orders/{id}/cancel`). Configuração
   `moneyx.pix.mercadopago.*` (`MercadoPagoProperties`; token em `MERCADOPAGO_ACCESS_TOKEN`, opcional no Compose).
   Comportamento CONFERIDO no sandbox real:
   - `X-Idempotency-Key` obrigatória; **mesma chave + mesmo corpo = MESMA order (201)**; outro corpo = 409
@@ -982,12 +1000,13 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   - Vencimento: só duração (`expiration_time`, ISO-8601 de `Duration.toString()`, ex. `PT29M59S`; 5 min aceito);
     `date_of_expiration` absoluto → 400 `unsupported_properties`. O MP devolve o instante calculado a partir de
     quando ELE recebeu o pedido (um pouco depois do nosso).
-  - Status: `action_required`/`waiting_transfer` → `processed`/`accredited` (pago); `canceled`. Cancelar de novo →
+  - Status: `action_required`/`waiting_transfer` → `processed`/`accredited` (pago); `canceled`; expirada =
+    `canceled/expired` (mapeamento completo em "Conciliação com o PSP"). Cancelar de novo →
     409 `order_already_canceled`; id inexistente → 404 `order_not_found`. Ids de teste começam com `ORDTST`.
   - `payer.first_name = "APRO"` (`test-payer-first-name`, SÓ sandbox) aprova sozinho, com atraso VARIÁVEL
     (medido: 0 a 46 s). `payer.email` é obrigatório no MP (hoje fixo em `payer-email`).
   - O BR Code do MP traz o txid no campo 62.05 (ex.: `mpqrinter190381238073`, 21 caracteres minúsculos):
-    `PixBrCode.txidOf` lê (conferindo o CRC). A V13 terá de aceitar esse formato.
+    `PixBrCode.txidOf` lê (conferindo o CRC). A V13 aceita esse formato.
   - Erros: `MercadoPagoException(httpStatus, code = errors[0].code, retryable, retryAfter)`. Repetível: timeout,
     conexão, 429 (com `Retry-After`) e 5xx; 4xx não. Redirecionamento não é seguido (levaria o token). Id da order
     validado (`[A-Za-z0-9]{1,64}`) antes de entrar na URL. O token nunca vai para mensagem/log/toString, e é
@@ -1014,6 +1033,9 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   - Expiração: `fixedDelay` 1 min, lotes de 100 até esvaziar. PENDING com `expires_at <= now` → EXPIRED
     (o mesmo limite inclusivo da regra de pagar).
   - Limpeza: `fixedDelay` 1 h, lotes de 1.000, apaga `payment_idempotency_keys` com `expires_at <= now`.
+  - **Desde a Fase 7:** a expiração local só pega cobranças SEM `provider_order_id` (sandbox). As do PSP expiram pela
+    conciliação, que cancela no PSP antes. Jobs novos no `PaymentMaintenanceJobs`: recuperação
+    de `CREATING` (30 s, lote 20, 7c-1) e **conciliação com o PSP** (30 s, lote 20, 7d; sem efeito com o sandbox).
 - Cada lote é uma transação curta (`TransactionTemplate`; `@Transactional` não funcionaria numa chamada interna da
   mesma classe). Um único `now` por execução.
 - `SELECT ... FOR UPDATE SKIP LOCKED`: linhas trancadas por pagar/cancelar em andamento são puladas e ficam para a
@@ -1048,6 +1070,9 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - `POST /v1/payments/{id}/cancel` (ação explícita; não `DELETE`, o pagamento continua existindo) → 200 CANCELED.
   Já CANCELED → **200 idempotente** (mantém o `canceledAt` original). PAID/EXPIRED → 409 `payment_not_pending`
   (com `paymentStatus`). PENDING com prazo vencido → 409 `payment_expired`. Usa o lock pessimista.
+  **Cobrança do PSP (7d):** cancela PRIMEIRO no PSP, fora de transação. Se já tiver sido paga, vira PAID e responde 409;
+  se o PSP estiver fora ou processando, responde 503 `payment_provider_unavailable` + Retry-After e nada muda (o
+  `@Transactional` saiu do método; as transações são abertas com `TransactionTemplate`).
 - Comprovado por mutação (6 bugs plantados, todos detectados) e por HTTP real com pagar × cancelar simultâneos.
 
 ### Fase 5 — Eventos e webhooks
@@ -1188,10 +1213,23 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 ### Fase 7 — Evolução
 
-- [ ] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
+- [x] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
   descartada pela burocracia de certificado mTLS). Etapas 7a–7e no PROGRESS.md. [x] 7a: porta `PixProvider`. [x] 7b: cliente do Mercado Pago.
   [x] 7c-1: criação em três fases + recuperação (V13). [x] 7c-2: provedor Mercado Pago ligado.
-  [x] 7d: conciliação (V14). [x] 7e: aviso do MP com assinatura (teste real com URL pública pendente).
+  [x] 7d: conciliação (V14). [x] 7e: aviso do MP com assinatura.
+
+**Provedor Pix real concluído em 2026-11-25** (commits `4bbf314`, `1677851`, `33aed4f`): 679 testes, 14 mutações
+detectadas, ponta a ponta real no sandbox do MP (pago pela conciliação, cancelar com o MP fora = 503, vencido
+cancelado no MP antes de EXPIRED).
+
+Pendências e próximos itens da Fase 7 (evolução):
+- [ ] Teste real do aviso do MP: URL pública HTTPS (túnel), segredo no painel, confirmar o manifesto da assinatura [?].
+- [ ] Trivy bloqueante (e atualizar à mão a imagem do Trivy no `ci.yml`; MEDIUM do `zlib` na base Alpine).
+- [ ] Chaves `mx_live_` com verificação (e-mail/KYC) e bloqueio de `/v1/sandbox/**` para elas.
+- [ ] Limite de volume por comerciante (coluna própria).
+- [ ] Proxy de saída para webhooks (DNS rebinding), proxies confiáveis para o IP real no rate limit, HSTS atrás de
+  proxy (forwarded headers), rate limit em Redis se houver mais de uma instância.
+- [ ] Migrar para Java 25 LTS (etapa própria: pom, CI, Dockerfile).
 - [ ] Desenvolver dashboard.
 - [ ] Avaliar requisitos legais e regulatórios.
 - [ ] Avaliar viabilidade comercial.
