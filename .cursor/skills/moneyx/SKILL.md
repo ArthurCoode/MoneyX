@@ -378,7 +378,7 @@ api  →  service  →  repository  →  domain
   `payment_not_pending`, `payment_expired`, `concurrent_update`, `invalid_starting_after`,
   `webhook_endpoint_limit_reached`, `invalid_webhook_url`, `webhook_endpoint_deleted`, `webhook_endpoint_unavailable`,
   `delivery_not_failed`, `rate_limit_exceeded`, `volume_limit_exceeded`, `payment_provider_unavailable` (503),
-  `payment_provider_error` (502). O `detail` é para humanos e pode mudar.
+  `payment_provider_error` (502), `sandbox_payment_not_supported`. O `detail` é para humanos e pode mudar.
 - Ações sobre um recurso que mudam seu estado usam `POST /recurso/{id}/<acao>` (ex.: `/cancel`) e são idempotentes
   quando o estado-alvo já foi atingido.
 - `DELETE` é idempotente: repetir a operação já concluída responde `204`.
@@ -906,6 +906,23 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   - Testes: `PaymentIdempotencyIntegrationTest` (fluxo, recuperação, concorrência ×3), `PaymentTest` (domínio),
     `PaymentFixtures` (`creating`/`pending` para testes). **Após mudar assinaturas, rodar `mvnw clean`**: a compilação
     incremental chegou a dizer "nada para compilar" com os testes desatualizados.
+- **Provedor Mercado Pago ligado (2026-11-24, Etapa 7c-2):** `MercadoPagoPixProvider` (`MONEYX_PIX_PROVIDER=mercadopago`;
+  sem `MERCADOPAGO_ACCESS_TOKEN` a app não sobe). Chave `creationKeyFor(paymentId)`, `external_reference` = id do
+  pagamento, descrição cortada em **150** (limite do MP; o MoneyX guarda a completa), txid do BR Code (ou o id da
+  order), ids e vencimento do MP. Confere que a order tem o MESMO valor e a MESMA referência (senão falha definitiva).
+  Order sem `qr_code` → temporária. **`idempotency_key_already_used` é tratado como TEMPORÁRIO, nunca descartado:**
+  significa que JÁ existe uma order com a chave (o corpo mudou entre tentativas, p.ex. configuração do MP alterada);
+  descartar deixaria uma order, talvez paga, sem dono (bug real encontrado no teste ponta a ponta).
+  - **O MP compara o corpo da repetição BYTE A BYTE** (JSON com espaços → 409) e a repetição devolve o estado ATUAL
+    da order (uma order já em `processing` não traz mais `qr_code`). Não mudar a configuração do MP (e-mail do
+    pagador, `test-payer-first-name`, corte da descrição) com criações em andamento.
+  - Variáveis do Compose: `MONEYX_PIX_PROVIDER`, `MONEYX_PIX_MERCADOPAGO_TEST_PAYER_FIRST_NAME` (só sandbox: `APRO`),
+    `MONEYX_PIX_MERCADOPAGO_BASE_URL`. Placeholders explícitos no `application.properties` (o relaxed binding do Spring
+    leria cada `_` como ponto).
+  - `POST /v1/sandbox/payments/{id}/pay` só aceita cobranças do provedor `sandbox` (senão 409
+    `sandbox_payment_not_supported`): marcar como pago localmente uma cobrança do MP diria "pago" sem dinheiro.
+  - Testes: `MercadoPagoPixProviderTest` (servidor falso), `PixProviderSelectionTest` (contexto Spring pequeno: escolhe
+    o provedor e o CRIA; pegou o "No default constructor found" que só a app real mostrou, por haver dois construtores).
 - **Emissor da cobrança (desde 2026-11-24, Fase 7 Etapa 7a):** `payment/provider/PixProvider` (`name()`,
   `createCharge(PixChargeRequest)` → `PixCharge(txid, copyPaste)`), escolhido por `moneyx.pix.provider` (padrão
   `sandbox` = `SandboxPixProvider`, BR Code local). `Payment.create` NÃO gera mais o Pix: `attachPixCharge` (uma vez,
@@ -1134,7 +1151,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 
 - [ ] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
   descartada pela burocracia de certificado mTLS). Etapas 7a–7e no PROGRESS.md. [x] 7a: porta `PixProvider`. [x] 7b: cliente do Mercado Pago.
-  [x] 7c-1: criação em três fases + recuperação (V13).
+  [x] 7c-1: criação em três fases + recuperação (V13). [x] 7c-2: provedor Mercado Pago ligado.
 - [ ] Desenvolver dashboard.
 - [ ] Avaliar requisitos legais e regulatórios.
 - [ ] Avaliar viabilidade comercial.
