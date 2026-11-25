@@ -41,10 +41,13 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
      * bloqueado e duas instâncias da aplicação nunca pegam o mesmo pagamento.
      *
      * Usa o índice parcial idx_payments_pending_expires_at (V6). SQL nativo: SKIP LOCKED não existe em JPQL.
+     *
+     * Só cobranças LOCAIS (sem provider_order_id). Uma cobrança num PSP externo só expira depois de cancelada lá
+     * (o pagador pode ter pago no último segundo): ver findProviderChargesToReconcile.
      */
     @Query(value = """
             SELECT * FROM payments
-            WHERE status = 'PENDING' AND expires_at <= :now
+            WHERE status = 'PENDING' AND expires_at <= :now AND provider_order_id IS NULL
             ORDER BY expires_at
             LIMIT :limit
             FOR UPDATE SKIP LOCKED
@@ -89,4 +92,21 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
             LIMIT :limit
             """, nativeQuery = true)
     List<Payment> findCreatingCreatedBefore(Instant createdBefore, int limit);
+
+    /**
+     * Conciliação (Etapa 7d): pagamentos PENDING com cobrança no PSP {@code provider}. Primeiro os que já venceram
+     * (precisam ser cancelados no PSP), depois os consultados há mais tempo (NULLS FIRST = nunca consultados).
+     * Sem trava: a consulta ao PSP acontece FORA de transação; a decisão trava a linha depois.
+     * Índice parcial idx_payments_pending_provider_check (V14).
+     */
+    @Query(value = """
+            SELECT * FROM payments
+            WHERE status = 'PENDING' AND provider_order_id IS NOT NULL AND pix_provider = :provider
+            ORDER BY (expires_at <= :now) DESC, provider_checked_at NULLS FIRST, created_at
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Payment> findProviderChargesToReconcile(String provider, Instant now, int limit);
+
+    /** Pagamento dono de uma order do PSP (UNIQUE da V13). Usado pelo webhook de entrada do PSP. */
+    Optional<Payment> findByPixProviderAndProviderOrderId(String pixProvider, String providerOrderId);
 }

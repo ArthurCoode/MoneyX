@@ -17,6 +17,8 @@ import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.provider.PixChargeRequest;
 import com.moneyx.payment.provider.PixProvider;
 import com.moneyx.payment.provider.PixProviderException;
+import com.moneyx.payment.provider.ProviderChargeStatus;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.moneyx.payment.provider.SandboxPixProvider;
 import com.moneyx.payment.exception.SandboxPaymentNotSupportedException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
@@ -58,6 +60,10 @@ public class PaymentService {
     private final PixProvider pixProvider;
     private final Clock clock;
     private final TransactionTemplate transaction;
+    private final MeterRegistry meters;
+
+    private static final String CANCEL_UNAVAILABLE =
+            "The Pix provider could not confirm the cancellation. The payment was not changed; retry later";
 
     PaymentService(PaymentRepository paymentRepository,
                    PaymentIdempotencyKeyRepository idempotencyKeyRepository,
@@ -65,7 +71,8 @@ public class PaymentService {
                    PaymentVolumeLimit volumeLimit,
                    PixProvider pixProvider,
                    Clock clock,
-                   PlatformTransactionManager transactionManager) {
+                   PlatformTransactionManager transactionManager,
+                   MeterRegistry meters) {
         this.paymentRepository = paymentRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.events = events;
@@ -73,6 +80,7 @@ public class PaymentService {
         this.pixProvider = pixProvider;
         this.clock = clock;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.meters = meters;
     }
 
     /**
@@ -154,6 +162,8 @@ public class PaymentService {
             // Só pagamentos NOVOS contam (uma repetição não soma de novo nem é recusada). Se estourar, a exceção
             // desfaz também a reserva da chave: o cliente pode tentar de novo depois com a mesma chave.
             volumeLimit.check(merchantId, payment.getAmount(), now);
+            // O pedido ao PSP é montado UMA vez e gravado: toda repetição reenvia o mesmo (V14).
+            payment.recordProviderRequest(pixProvider.prepareCharge(chargeRequestOf(payment)));
             paymentRepository.save(payment);
             return new PaymentCreation(payment, false);
         }
@@ -183,17 +193,31 @@ public class PaymentService {
      * @return o pagamento no estado atual (PENDING, ou outro se alguém concluiu antes)
      */
     private Payment charge(Payment payment) {
-        if (payment.isPastExpiration(now())) {
-            // Ninguém recebeu um BR Code deste pagamento: não adianta emitir a cobrança agora.
+        boolean local = SandboxPixProvider.NAME.equals(payment.getPixProvider());
+        if (local && payment.isPastExpiration(now())) {
+            // Cobrança local: ninguém recebeu um BR Code deste pagamento, não adianta emitir agora.
             return transaction.execute(status -> expireStuck(payment.getMerchantId(), payment.getId()));
         }
+        if (!payment.getPixProvider().equals(pixProvider.name())) {
+            // A configuração mudou de provedor: só o provedor que recebeu o pedido sabe se a cobrança existe.
+            log.warn("payment.provider_not_active paymentId={} provider={} active={}",
+                    payment.getId(), payment.getPixProvider(), pixProvider.name());
+            throw new PaymentProviderUnavailableException(null);
+        }
 
-        PixChargeRequest request = new PixChargeRequest(
-                payment.getId(), payment.getAmount(), payment.requestedExpiration(), payment.getDescription());
         PixCharge charge;
         try {
-            charge = pixProvider.createCharge(request);
+            charge = pixProvider.createCharge(chargeRequestOf(payment));
         } catch (PixProviderException e) {
+            if (e.getExisting() != null) {
+                // A order existe no PSP mas veio sem BR Code (ex.: já sendo paga). Se já está paga, o pagamento vira
+                // PAID; se foi encerrada e o prazo acabou, EXPIRED. Senão continua CREATING.
+                Payment settled = transaction.execute(status ->
+                        settleCreation(payment.getMerchantId(), payment.getId(), e.getExisting()));
+                if (settled.getStatus() != PaymentStatus.CREATING) {
+                    return settled;
+                }
+            }
             if (e.isRetryable()) {
                 log.warn("payment.charge_failed paymentId={} provider={} code={} retryable=true",
                         payment.getId(), payment.getPixProvider(), e.getCode());
@@ -205,7 +229,74 @@ public class PaymentService {
             throw new PaymentProviderRejectedException();
         }
 
+        if (!local && payment.isPastExpiration(now())) {
+            // O prazo do MoneyX acabou com o pagamento ainda CREATING: o comerciante nunca recebeu este BR Code. A order
+            // (que esta chamada devolveu ou acabou de criar) é cancelada no PSP antes de expirar: se o PSP recusar porque
+            // ela foi paga, o pagamento vira PAID.
+            return closeExpiredCreation(payment, charge);
+        }
         return transaction.execute(status -> complete(payment.getMerchantId(), payment.getId(), charge));
+    }
+
+    private PixChargeRequest chargeRequestOf(Payment payment) {
+        return new PixChargeRequest(payment.getId(), payment.getAmount(), payment.requestedExpiration(),
+                payment.getDescription(), payment.getProviderRequest());
+    }
+
+    private Payment closeExpiredCreation(Payment payment, PixCharge charge) {
+        ProviderChargeStatus closed;
+        try {
+            closed = pixProvider.cancelCharge(payment.getId(), charge.providerOrderId());
+        } catch (PixProviderException e) {
+            log.warn("payment.close_expired_creation_failed paymentId={} provider={} code={}",
+                    payment.getId(), payment.getPixProvider(), e.getCode());
+            throw new PaymentProviderUnavailableException(e.getRetryAfter());
+        }
+        return transaction.execute(status -> settleCreation(payment.getMerchantId(), payment.getId(), closed));
+    }
+
+    /**
+     * Decide um CREATING a partir do estado da order no PSP (dentro da transação): paga → PAID (com evento
+     * payment.paid); encerrada e com o prazo vencido → EXPIRED; qualquer outro caso → continua CREATING.
+     */
+    private Payment settleCreation(UUID merchantId, UUID paymentId, ProviderChargeStatus provider) {
+        Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(() -> new IllegalStateException("Payment being charged no longer exists"));
+        if (payment.getStatus() != PaymentStatus.CREATING) {
+            return payment;
+        }
+        Instant now = now();
+        if (provider.state() == ProviderChargeStatus.State.PAID) {
+            if (!matches(payment, provider)) {
+                return payment; // registrado em matches; nunca PAID com valor/referência diferente
+            }
+            payment.confirmPaidBeforeCharge(provider.providerOrderId(), provider.providerPaymentId(), now);
+            events.record(EventType.PAYMENT_PAID, payment, now);
+            log.warn("payment.paid_before_charge paymentId={} providerOrderId={}", payment.getId(), provider.providerOrderId());
+        } else if ((provider.state() == ProviderChargeStatus.State.CLOSED
+                || provider.state() == ProviderChargeStatus.State.EXPIRED) && payment.isPastExpiration(now)) {
+            payment.expireBeforeCharge(now);
+            log.warn("payment.expired_before_charge paymentId={} provider={}", payment.getId(), payment.getPixProvider());
+        }
+        return payment;
+    }
+
+    /**
+     * Regra de dinheiro: o estado do PSP só vale se a order for EXATAMENTE a deste pagamento (mesma referência, mesmo
+     * valor, mesma order). Divergência = log ERROR + métrica, e nenhuma mudança (revisão manual).
+     */
+    private boolean matches(Payment payment, ProviderChargeStatus provider) {
+        boolean sameOrder = payment.getProviderOrderId() == null
+                || payment.getProviderOrderId().equals(provider.providerOrderId());
+        boolean ok = sameOrder
+                && payment.getAmount() == provider.amount()
+                && payment.getId().toString().equals(provider.reference());
+        if (!ok) {
+            log.error("payment.provider_mismatch paymentId={} providerOrderId={} expectedAmount={} providerAmount={}",
+                    payment.getId(), provider.providerOrderId(), payment.getAmount(), provider.amount());
+            meters.counter("moneyx.payments.reconciliation.mismatches").increment();
+        }
+        return ok;
     }
 
     /** Fase 3 (dentro da transação). */
@@ -269,6 +360,132 @@ public class PaymentService {
             }
         }
         return resolved;
+    }
+
+    // ---------- conciliação com o PSP (Etapa 7d) ----------
+
+    /**
+     * Rotina de conciliação: para cada pagamento PENDING com cobrança no PSP ativo, pergunta ao PSP o estado da order
+     * (FORA de transação) e decide (dentro de uma transação curta, com a linha trancada):
+     * - no prazo: consulta. Paga → PAID; encerrada no PSP → CANCELED; aberta → nada;
+     * - vencido: CANCELA no PSP antes de expirar. Encerrada → EXPIRED; o PSP recusou porque foi paga → PAID.
+     *
+     * Se o PSP estiver fora do ar ou limitando requisições, a rodada para (tenta de novo na próxima): nada muda.
+     *
+     * @return quantos pagamentos mudaram de estado
+     */
+    public int reconcileProviderCharges(int limit) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("reconcileProviderCharges must not run inside a transaction");
+        }
+        List<Payment> due = paymentRepository.findProviderChargesToReconcile(pixProvider.name(), now(), limit);
+        int changed = 0;
+        for (Payment payment : due) {
+            try {
+                if (reconcile(payment) != PaymentStatus.PENDING) {
+                    changed++;
+                }
+            } catch (PaymentProviderUnavailableException e) {
+                break; // PSP fora do ar ou com limite: o resto do lote espera a próxima rodada
+            } catch (RuntimeException e) {
+                log.error("payment.reconcile_failed paymentId={}", payment.getId(), e);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Webhook de entrada do PSP (Etapa 7e): concilia AGORA o pagamento dono da order. O aviso só antecipa a consulta;
+     * o estado vem sempre do próprio PSP (GET), nunca do corpo do aviso.
+     *
+     * @return false se a order não pertence a nenhum pagamento conhecido
+     * @throws PaymentProviderUnavailableException o PSP não respondeu (o aviso deve ser repetido)
+     */
+    public boolean reconcileProviderOrder(String providerOrderId) {
+        Payment payment = paymentRepository.findByPixProviderAndProviderOrderId(pixProvider.name(), providerOrderId)
+                .orElse(null);
+        if (payment == null) {
+            return false;
+        }
+        if (payment.getStatus() == PaymentStatus.PENDING) {
+            reconcile(payment);
+        }
+        return true;
+    }
+
+    private PaymentStatus reconcile(Payment payment) {
+        boolean overdue = payment.isPastExpiration(now());
+        ProviderChargeStatus provider;
+        try {
+            provider = overdue
+                    ? pixProvider.cancelCharge(payment.getId(), payment.getProviderOrderId())
+                    : pixProvider.fetchCharge(payment.getProviderOrderId());
+        } catch (PixProviderException e) {
+            if (e.isRetryable()) {
+                log.warn("payment.reconcile_unavailable paymentId={} code={}", payment.getId(), e.getCode());
+                throw new PaymentProviderUnavailableException(e.getRetryAfter());
+            }
+            // Erro definitivo só para esta order (ex.: não encontrada): vai para o fim da fila e fica para revisão.
+            log.error("payment.reconcile_rejected paymentId={} providerOrderId={} code={}",
+                    payment.getId(), payment.getProviderOrderId(), e.getCode());
+            transaction.executeWithoutResult(status -> paymentRepository
+                    .lockByIdAndMerchantId(payment.getId(), payment.getMerchantId())
+                    .ifPresent(locked -> locked.recordProviderCheck(now())));
+            return PaymentStatus.PENDING;
+        }
+        return transaction.execute(status ->
+                applyProviderStatus(payment.getMerchantId(), payment.getId(), provider)).getStatus();
+    }
+
+    /**
+     * Aplica o estado do PSP a um pagamento PENDING (dentro da transação, com a linha trancada). O estado no PSP só
+     * avança (aberta → paga/encerrada), então uma resposta "atrasada" nunca desfaz nada: no máximo não muda nada.
+     */
+    private Payment applyProviderStatus(UUID merchantId, UUID paymentId, ProviderChargeStatus provider) {
+        Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(() -> new IllegalStateException("Payment being reconciled no longer exists"));
+        Instant now = now();
+        payment.recordProviderCheck(now);
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return payment;
+        }
+        switch (provider.state()) {
+            case PAID -> {
+                if (matches(payment, provider)) {
+                    payment.confirmPaidByProvider(now);
+                    events.record(EventType.PAYMENT_PAID, payment, now);
+                }
+            }
+            case CLOSED -> {
+                if (!payment.getProviderOrderId().equals(provider.providerOrderId())) {
+                    matches(payment, provider); // registra a divergência
+                } else if (payment.isPastExpiration(now)) {
+                    payment.expire(now);
+                    events.record(EventType.PAYMENT_EXPIRED, payment, now);
+                } else {
+                    // Encerrada no PSP sem passar pelo MoneyX (ex.: cancelada no painel do PSP).
+                    payment.cancel(now);
+                    events.record(EventType.PAYMENT_CANCELED, payment, now);
+                }
+            }
+            case EXPIRED -> {
+                if (!payment.getProviderOrderId().equals(provider.providerOrderId())) {
+                    matches(payment, provider); // registra a divergência
+                } else if (payment.isPastExpiration(now)) {
+                    payment.expire(now);
+                    events.record(EventType.PAYMENT_EXPIRED, payment, now);
+                } else {
+                    payment.expireByProvider(now); // o PSP expirou antes do prazo do MoneyX
+                    events.record(EventType.PAYMENT_EXPIRED, payment, now);
+                }
+            }
+            case UNKNOWN -> log.warn("payment.provider_status_unknown paymentId={} providerStatus={}",
+                    payment.getId(), provider.providerStatus());
+            case OPEN, IN_PROGRESS -> {
+                // aguardando o pagador ou o PSP: nada a decidir agora
+            }
+        }
+        return payment;
     }
 
     private Instant now() {
@@ -368,12 +585,48 @@ public class PaymentService {
      * Usa o mesmo lock pessimista do "pagar": um "pagar" e um "cancelar" simultâneos são serializados,
      * exatamente um vence e o outro recebe o motivo correto (ex.: "já está PAID").
      *
-     * @throws PaymentNotFoundException   pagamento inexistente ou de outro comerciante
-     * @throws PaymentNotPendingException pagamento PAID ou EXPIRED
-     * @throws PaymentExpiredException    prazo encerrado (mesmo que o status ainda seja PENDING)
+     * Cobrança num PSP externo (Etapa 7d): o MoneyX cancela PRIMEIRO no PSP, fora de transação. Se o PSP recusar
+     * porque o Pix foi pago, o pagamento vira PAID (e o cancelamento responde 409 com status PAID). Se o PSP não
+     * responder, nada muda no MoneyX: 503 + Retry-After (o pagador pode estar pagando agora).
+     *
+     * @throws PaymentNotFoundException           pagamento inexistente ou de outro comerciante
+     * @throws PaymentNotPendingException         pagamento PAID ou EXPIRED
+     * @throws PaymentExpiredException            prazo encerrado (mesmo que o status ainda seja PENDING)
+     * @throws PaymentProviderUnavailableException o PSP não respondeu ou ainda está processando um pagamento
      */
-    @Transactional
     public Payment cancel(UUID merchantId, UUID paymentId) {
+        Payment current = transaction.execute(status -> paymentRepository.findByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(PaymentNotFoundException::new));
+        if (current.getStatus() == PaymentStatus.PENDING && current.hasProviderCharge()
+                && !current.isPastExpiration(now())) {
+            return cancelAtProvider(current);
+        }
+        return transaction.execute(status -> cancelLocally(merchantId, paymentId));
+    }
+
+    private Payment cancelAtProvider(Payment current) {
+        if (!current.getPixProvider().equals(pixProvider.name())) {
+            throw new PaymentProviderUnavailableException(CANCEL_UNAVAILABLE, null);
+        }
+        ProviderChargeStatus provider;
+        try {
+            provider = pixProvider.cancelCharge(current.getId(), current.getProviderOrderId());
+        } catch (PixProviderException e) {
+            log.warn("payment.cancel_unavailable paymentId={} code={}", current.getId(), e.getCode());
+            throw new PaymentProviderUnavailableException(CANCEL_UNAVAILABLE, e.getRetryAfter());
+        }
+        // Grava (commit) o que o PSP disse ANTES de responder: se foi pago, o PAID não pode se perder num rollback
+        // provocado pela resposta de erro ao comerciante.
+        Payment payment = transaction.execute(status ->
+                applyProviderStatus(current.getMerchantId(), current.getId(), provider));
+        return switch (payment.getStatus()) {
+            case CANCELED -> payment;
+            case PENDING -> throw new PaymentProviderUnavailableException(CANCEL_UNAVAILABLE, null);
+            default -> throw new PaymentNotPendingException(payment.getStatus());
+        };
+    }
+
+    private Payment cancelLocally(UUID merchantId, UUID paymentId) {
         Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
                 .orElseThrow(PaymentNotFoundException::new);
 

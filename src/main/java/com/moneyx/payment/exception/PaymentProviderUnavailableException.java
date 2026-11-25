@@ -14,7 +14,12 @@ public class PaymentProviderUnavailableException extends RuntimeException {
     private final Duration retryAfter;
 
     public PaymentProviderUnavailableException(Duration retryAfter) {
-        super("The Pix provider is temporarily unavailable. Retry with the same Idempotency-Key");
+        this("The Pix provider is temporarily unavailable. Retry with the same Idempotency-Key", retryAfter);
+    }
+
+    /** Para outras operações (ex.: cancelar), com a mensagem adequada. */
+    public PaymentProviderUnavailableException(String message, Duration retryAfter) {
+        super(message);
         this.retryAfter = retryAfter == null || retryAfter.isNegative() || retryAfter.isZero()
                 ? DEFAULT_RETRY_AFTER : retryAfter;
     }

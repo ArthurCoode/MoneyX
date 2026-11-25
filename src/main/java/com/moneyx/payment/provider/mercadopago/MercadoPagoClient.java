@@ -54,6 +54,21 @@ public class MercadoPagoClient {
 
     /** Cria uma order Pix. Repetível com a mesma idempotencyKey (devolve a mesma order). */
     public MercadoPagoOrder createPixOrder(CreatePixOrder request) {
+        return createPixOrder(request.idempotencyKey(), orderBody(request));
+    }
+
+    /**
+     * Envia um corpo já montado (orderBody) e gravado. O MP compara a repetição BYTE A BYTE com a primeira chamada:
+     * reenviar o corpo gravado devolve a mesma order mesmo que a configuração tenha mudado desde então.
+     */
+    public MercadoPagoOrder createPixOrder(String idempotencyKey, String body) {
+        Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
+        Objects.requireNonNull(body, "body must not be null");
+        return parseOrder(send("POST", ORDERS, body, idempotencyKey));
+    }
+
+    /** Monta o corpo JSON da criação (sem chamar a rede). */
+    public String orderBody(CreatePixOrder request) {
         ObjectNode body = json.createObjectNode();
         body.put("type", "online");
         body.put("external_reference", request.externalReference());
@@ -72,8 +87,7 @@ public class MercadoPagoClient {
         ObjectNode method = payment.putObject("payment_method");
         method.put("id", "pix");
         method.put("type", "bank_transfer");
-
-        return parseOrder(send("POST", ORDERS, body.toString(), request.idempotencyKey()));
+        return body.toString();
     }
 
     /** Estado atual da order. 404 vira MercadoPagoException com código "order_not_found". */

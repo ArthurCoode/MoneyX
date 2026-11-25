@@ -20,8 +20,8 @@ import java.util.UUID;
  * não representa 0,10 com exatidão e acumula erros de arredondamento; em centavos toda conta é exata.
  *
  * Estado: não há setStatus(). As transições acontecem apenas por métodos de domínio que validam a mudança:
- * CREATING -> PENDING (attachPixCharge) | EXPIRED (expireBeforeCharge);
- * PENDING -> PAID (markPaid) | CANCELED (cancel) | EXPIRED (expire).
+ * CREATING -> PENDING (attachPixCharge) | EXPIRED (expireBeforeCharge) | PAID (confirmPaidBeforeCharge);
+ * PENDING -> PAID (markPaid, confirmPaidByProvider) | CANCELED (cancel) | EXPIRED (expire, expireByProvider).
  *
  * CREATING existe porque a cobrança Pix pode vir de um PSP externo, chamado FORA da transação (Fase 7): o pagamento
  * é gravado primeiro, sem cobrança, e só vira PENDING quando o BR Code chega.
@@ -100,6 +100,17 @@ public class Payment {
     /** Id do pagamento dentro da order no PSP. Null no sandbox local. */
     @Column(name = "provider_payment_id", length = 64)
     private String providerPaymentId;
+
+    /**
+     * Pedido exato enviado ao PSP na criação (PixProvider.prepareCharge), reenviado igual em toda repetição. Null no
+     * sandbox local e em pagamentos anteriores à V14.
+     */
+    @Column(name = "provider_request", updatable = false)
+    private String providerRequest;
+
+    /** Última consulta ao PSP (conciliação). Null = nunca consultado. */
+    @Column(name = "provider_checked_at")
+    private Instant providerCheckedAt;
 
     @Column(name = "paid_at")
     private Instant paidAt;
@@ -224,6 +235,55 @@ public class Payment {
         changeStatus(PaymentStatus.EXPIRED, now);
     }
 
+    /**
+     * Grava o pedido que vai ao PSP (antes do primeiro INSERT; nunca muda depois). Null = provedor local.
+     */
+    public void recordProviderRequest(String request) {
+        requireStatus(PaymentStatus.CREATING, "given a provider request");
+        if (this.providerRequest != null) {
+            throw new IllegalStateException("Provider request already recorded");
+        }
+        this.providerRequest = request;
+    }
+
+    /** Registra a consulta ao PSP (não muda o estado do pagamento nem o updatedAt). */
+    public void recordProviderCheck(Instant now) {
+        Objects.requireNonNull(now, "now must not be null");
+        this.providerCheckedAt = now;
+    }
+
+    /** A cobrança está num PSP externo (pode ser consultada e cancelada lá). */
+    public boolean hasProviderCharge() {
+        return providerOrderId != null;
+    }
+
+    /**
+     * PENDING -> PAID por confirmação do PSP. Ao contrário de markPaid, NÃO confere o prazo: quem aceita ou recusa o
+     * Pix é o PSP; se ele diz que recebeu, o dinheiro entrou (a conciliação pode descobrir isso depois do prazo).
+     * Quem chama confere valor e referência antes.
+     */
+    public void confirmPaidByProvider(Instant now) {
+        requirePending("paid by the provider");
+        if (!hasProviderCharge()) {
+            throw new IllegalStateException("Payment has no provider charge");
+        }
+        this.paidAt = now;
+        changeStatus(PaymentStatus.PAID, now);
+    }
+
+    /**
+     * CREATING -> PAID: a order existe e foi paga no PSP, mas a resposta com o BR Code nunca chegou ao MoneyX (ex.: o
+     * pagador de teste do sandbox aprova a order antes da repetição). Guarda os ids da order; o BR Code fica vazio.
+     */
+    public void confirmPaidBeforeCharge(String providerOrderId, String providerPaymentId, Instant now) {
+        requireStatus(PaymentStatus.CREATING, "paid before charge");
+        Objects.requireNonNull(providerOrderId, "providerOrderId must not be null");
+        this.providerOrderId = providerOrderId;
+        this.providerPaymentId = providerPaymentId;
+        this.paidAt = now;
+        changeStatus(PaymentStatus.PAID, now);
+    }
+
     /** PENDING -> PAID. Não é possível pagar depois do prazo, mesmo que o job de expiração ainda não tenha rodado. */
     public void markPaid(Instant now) {
         requirePending("paid");
@@ -246,6 +306,18 @@ public class Payment {
         requirePending("expired");
         if (!isPastExpiration(now)) {
             throw new IllegalStateException("Payment cannot be expired before " + expiresAt);
+        }
+        changeStatus(PaymentStatus.EXPIRED, now);
+    }
+
+    /**
+     * PENDING -> EXPIRED porque o PSP expirou a cobrança (pode ser antes do prazo do MoneyX: quem aceita o Pix é o PSP,
+     * e uma cobrança expirada lá não recebe mais pagamento).
+     */
+    public void expireByProvider(Instant now) {
+        requirePending("expired by the provider");
+        if (!hasProviderCharge()) {
+            throw new IllegalStateException("Payment has no provider charge");
         }
         changeStatus(PaymentStatus.EXPIRED, now);
     }
@@ -334,6 +406,14 @@ public class Payment {
 
     public String getProviderPaymentId() {
         return providerPaymentId;
+    }
+
+    public String getProviderRequest() {
+        return providerRequest;
+    }
+
+    public Instant getProviderCheckedAt() {
+        return providerCheckedAt;
     }
 
     public Instant getPaidAt() {

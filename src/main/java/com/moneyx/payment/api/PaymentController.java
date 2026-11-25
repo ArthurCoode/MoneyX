@@ -114,10 +114,11 @@ public class PaymentController {
      * apenas muda de estado. Idempotente: cancelar de novo um pagamento CANCELED responde 200.
      */
     @Operation(operationId = "cancelPayment", summary = "Cancelar pagamento",
-            description = "Só PENDING dentro do prazo. Idempotente: cancelar de novo responde 200. PAID/EXPIRED → 409 `payment_not_pending`; prazo vencido → 409 `payment_expired`.")
+            description = "Só PENDING dentro do prazo. Idempotente: cancelar de novo responde 200. PAID/EXPIRED → 409 `payment_not_pending`; prazo vencido → 409 `payment_expired`. Com um PSP externo, o MoneyX cancela primeiro no PSP: se o Pix já foi pago, o pagamento vira PAID e a resposta é 409 `payment_not_pending`; se o PSP não confirmar, nada muda e a resposta é 503 `payment_provider_unavailable` com `Retry-After`.")
     @ApiResponse(responseCode = "200", description = "Pagamento cancelado.")
     @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
+    @ApiResponse(responseCode = "503", ref = "#/components/responses/ServiceUnavailable")
     @PostMapping("/{id}/cancel")
     public PaymentView cancel(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
         return PaymentView.from(service.cancel(principal.merchantId(), id));
