@@ -4,6 +4,7 @@ import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.merchant.service.MerchantService;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
+import com.moneyx.payment.domain.PaymentFixtures;
 import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
@@ -53,7 +54,7 @@ class PaymentSandboxControllerTest {
 
     @Test
     void payReturns200WithPaidPayment() throws Exception {
-        Payment payment = Payment.create(merchantId, 4990, PaymentCurrency.BRL, null, null, null, NOW);
+        Payment payment = PaymentFixtures.pending(merchantId, 4990, NOW);
         payment.markPaid(NOW.plusSeconds(60));
         when(service.simulatePixPayment(merchantId, paymentId)).thenReturn(payment);
 

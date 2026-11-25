@@ -11,14 +11,23 @@ import com.moneyx.payment.exception.PaymentExpiredException;
 import com.moneyx.payment.exception.PaymentNotFoundException;
 import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
+import com.moneyx.payment.domain.PixCharge;
+import com.moneyx.payment.exception.PaymentProviderRejectedException;
+import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.provider.PixChargeRequest;
 import com.moneyx.payment.provider.PixProvider;
+import com.moneyx.payment.provider.PixProviderException;
 import com.moneyx.payment.repository.PaymentIdempotencyKeyRepository;
 import com.moneyx.payment.repository.PaymentRepository;
 import com.moneyx.payment.repository.PaymentSpecifications;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -34,6 +43,8 @@ import java.util.regex.Pattern;
 @Service
 public class PaymentService {
 
+    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+
     /** 1 a 255 caracteres ASCII visíveis (sem espaços nem caracteres de controle). */
     private static final Pattern IDEMPOTENCY_KEY_FORMAT =
             Pattern.compile("^[\\x21-\\x7E]{1," + PaymentIdempotencyKey.MAX_LENGTH + "}$");
@@ -44,48 +55,70 @@ public class PaymentService {
     private final PaymentVolumeLimit volumeLimit;
     private final PixProvider pixProvider;
     private final Clock clock;
+    private final TransactionTemplate transaction;
 
     PaymentService(PaymentRepository paymentRepository,
                    PaymentIdempotencyKeyRepository idempotencyKeyRepository,
                    PaymentEventRecorder events,
                    PaymentVolumeLimit volumeLimit,
                    PixProvider pixProvider,
-                   Clock clock) {
+                   Clock clock,
+                   PlatformTransactionManager transactionManager) {
         this.paymentRepository = paymentRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.events = events;
         this.volumeLimit = volumeLimit;
         this.pixProvider = pixProvider;
         this.clock = clock;
+        this.transaction = new TransactionTemplate(transactionManager);
     }
 
     /**
-     * Cria um pagamento de forma idempotente.
+     * Cria um pagamento de forma idempotente, em TRÊS fases (a cobrança pode vir de um PSP externo):
      *
-     * Tudo acontece em UMA transação:
-     * 1. monta o pagamento em memória (o domínio valida valor, prazo e textos);
-     * 2. tenta reservar a Idempotency-Key apontando para esse pagamento (comando atômico);
-     * 3a. reservou: grava o pagamento e devolve replayed=false;
-     * 3b. a chave já existia: confere se o corpo é o mesmo e devolve o pagamento ORIGINAL (replayed=true),
-     *     descartando o pagamento montado no passo 1, que nunca chega ao banco.
+     * 1. transação curta (begin): trava o comerciante, reserva a Idempotency-Key, confere o limite de volume e grava o
+     *    pagamento como CREATING (sem cobrança). Uma repetição com a mesma chave devolve o pagamento original.
+     * 2. FORA de transação (charge): pede a cobrança ao PixProvider. Nenhuma trava fica presa esperando a rede.
+     * 3. transação curta (complete): trava o pagamento e, se ainda estiver CREATING, anexa a cobrança, muda para
+     *    PENDING e grava o evento payment.created.
      *
-     * Se algo falhar, a transação inteira é desfeita: a chave não fica "consumida" e o cliente
-     * pode repetir a requisição com segurança.
+     * Se o provedor falhar:
+     * - temporariamente (timeout, fora do ar): o pagamento fica CREATING e PaymentProviderUnavailableException (503).
+     *   Repetir a requisição com a mesma chave (ou a rotina resumeStuckCreations) retoma a fase 2: o provedor devolve
+     *   a MESMA cobrança para o mesmo pedido, então chamar de novo é seguro;
+     * - definitivamente (recusou o pedido): o pagamento e a chave são descartados e PaymentProviderRejectedException
+     *   (502). Nenhuma cobrança foi criada no provedor.
      *
-     * @throws InvalidIdempotencyKeyException se a chave tiver formato inválido
-     * @throws IdempotencyKeyReusedException  se a chave já foi usada com outro corpo
-     * @throws VolumeLimitExceededException   se o pagamento passar do limite acumulado do dia ou do mês
-     * @throws IllegalArgumentException       se os dados violarem as regras do domínio
+     * Não pode rodar dentro de uma transação de quem chama: as fases 1 e 3 precisam ser commits independentes.
+     *
+     * @throws InvalidIdempotencyKeyException     se a chave tiver formato inválido
+     * @throws IdempotencyKeyReusedException      se a chave já foi usada com outro corpo
+     * @throws VolumeLimitExceededException       se o pagamento passar do limite acumulado do dia ou do mês
+     * @throws PaymentProviderUnavailableException o provedor está fora do ar (o pagamento fica CREATING)
+     * @throws PaymentProviderRejectedException   o provedor recusou o pedido (nada foi criado)
+     * @throws IllegalArgumentException           se os dados violarem as regras do domínio
      */
-    @Transactional
     public PaymentCreation create(UUID merchantId, String idempotencyKey, CreatePaymentCommand command) {
         if (idempotencyKey == null || !IDEMPOTENCY_KEY_FORMAT.matcher(idempotencyKey).matches()) {
             throw new InvalidIdempotencyKeyException();
         }
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("PaymentService.create must not run inside a transaction");
+        }
 
+        PaymentCreation begun = transaction.execute(status -> begin(merchantId, idempotencyKey, command));
+        Payment payment = begun.payment();
+        if (payment.getStatus() == PaymentStatus.CREATING) {
+            payment = charge(payment);
+        }
+        return new PaymentCreation(payment, begun.replayed());
+    }
+
+    /** Fase 1 (dentro da transação). */
+    private PaymentCreation begin(UUID merchantId, String idempotencyKey, CreatePaymentCommand command) {
         // O PostgreSQL guarda microssegundos. Truncar aqui garante que a resposta da criação e a de um
         // replay (lida do banco) mostrem exatamente os mesmos instantes.
-        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        Instant now = now();
 
         Payment payment = Payment.create(
                 merchantId,
@@ -94,6 +127,7 @@ public class PaymentService {
                 command.description(),
                 command.externalReference(),
                 command.expiresInSeconds() == null ? null : Duration.ofSeconds(command.expiresInSeconds()),
+                pixProvider.name(),
                 now);
 
         String fingerprint = command.fingerprint();
@@ -118,15 +152,9 @@ public class PaymentService {
             // Só pagamentos NOVOS contam (uma repetição não soma de novo nem é recusada). Se estourar, a exceção
             // desfaz também a reserva da chave: o cliente pode tentar de novo depois com a mesma chave.
             volumeLimit.check(merchantId, payment.getAmount(), now);
-            // Só agora a cobrança é emitida: com um PSP real cada chamada cria uma cobrança de verdade, então uma
-            // repetição (reserved == 0) ou um pedido recusado pelo limite nunca chegam aqui.
-            payment.attachPixCharge(pixProvider.createCharge(new PixChargeRequest(
-                    payment.getId(), payment.getAmount(), payment.getExpiresAt(), payment.getDescription())));
             paymentRepository.save(payment);
-            events.record(EventType.PAYMENT_CREATED, payment, now);
             return new PaymentCreation(payment, false);
         }
-        // Daqui em diante é um replay: o pagamento já existia e o payment.created já foi registrado na 1ª vez.
 
         // A chave já existe e está válida: esta requisição é uma repetição.
         // Esta leitura é um comando novo; no PostgreSQL (READ COMMITTED) ela enxerga a linha que a
@@ -143,6 +171,106 @@ public class PaymentService {
                 .orElseThrow(() -> new IllegalStateException("Payment referenced by idempotency key not found"));
 
         return new PaymentCreation(original, true);
+    }
+
+    /**
+     * Fases 2 e 3: pede a cobrança ao provedor (fora de transação) e a anexa. Usada pela criação, pela repetição de
+     * uma criação que ficou CREATING e pela rotina de recuperação. Segura para rodar mais de uma vez ao mesmo tempo:
+     * o provedor devolve a mesma cobrança e a fase 3, sob trava, só anexa se o pagamento ainda estiver CREATING.
+     *
+     * @return o pagamento no estado atual (PENDING, ou outro se alguém concluiu antes)
+     */
+    private Payment charge(Payment payment) {
+        if (payment.isPastExpiration(now())) {
+            // Ninguém recebeu um BR Code deste pagamento: não adianta emitir a cobrança agora.
+            return transaction.execute(status -> expireStuck(payment.getMerchantId(), payment.getId()));
+        }
+
+        PixChargeRequest request = new PixChargeRequest(
+                payment.getId(), payment.getAmount(), payment.requestedExpiration(), payment.getDescription());
+        PixCharge charge;
+        try {
+            charge = pixProvider.createCharge(request);
+        } catch (PixProviderException e) {
+            if (e.isRetryable()) {
+                log.warn("payment.charge_failed paymentId={} provider={} code={} retryable=true",
+                        payment.getId(), payment.getPixProvider(), e.getCode());
+                throw new PaymentProviderUnavailableException(e.getRetryAfter());
+            }
+            log.warn("payment.charge_rejected paymentId={} provider={} code={}",
+                    payment.getId(), payment.getPixProvider(), e.getCode());
+            transaction.executeWithoutResult(status -> discard(payment.getMerchantId(), payment.getId()));
+            throw new PaymentProviderRejectedException();
+        }
+
+        return transaction.execute(status -> complete(payment.getMerchantId(), payment.getId(), charge));
+    }
+
+    /** Fase 3 (dentro da transação). */
+    private Payment complete(UUID merchantId, UUID paymentId, PixCharge charge) {
+        Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(() -> new IllegalStateException("Payment being charged no longer exists"));
+        if (payment.getStatus() != PaymentStatus.CREATING) {
+            return payment; // outra execução (repetição ou recuperação) concluiu antes
+        }
+        Instant now = now();
+        payment.attachPixCharge(charge, now);
+        events.record(EventType.PAYMENT_CREATED, payment, now);
+        return payment;
+    }
+
+    /** O provedor recusou o pedido: nada foi criado nele. Apaga o pagamento e libera a chave de idempotência. */
+    private void discard(UUID merchantId, UUID paymentId) {
+        paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .filter(payment -> payment.getStatus() == PaymentStatus.CREATING)
+                .ifPresent(payment -> {
+                    idempotencyKeyRepository.deleteByPaymentId(paymentId);
+                    paymentRepository.delete(payment);
+                });
+    }
+
+    /** CREATING com o prazo vencido vira EXPIRED (sem evento: o comerciante nunca recebeu este pagamento pronto). */
+    private Payment expireStuck(UUID merchantId, UUID paymentId) {
+        Payment payment = paymentRepository.lockByIdAndMerchantId(paymentId, merchantId)
+                .orElseThrow(() -> new IllegalStateException("Payment being charged no longer exists"));
+        if (payment.getStatus() == PaymentStatus.CREATING) {
+            payment.expireBeforeCharge(now());
+            log.warn("payment.expired_before_charge paymentId={} provider={}", payment.getId(), payment.getPixProvider());
+        }
+        return payment;
+    }
+
+    /**
+     * Rotina de recuperação: retoma pagamentos que ficaram em CREATING (o provedor estava fora do ar, ou a aplicação
+     * caiu entre as fases). Só pega os criados há mais de {@code grace} (para não disputar com a requisição que ainda
+     * está em andamento; se disputar, nada de errado acontece, só uma chamada a mais ao provedor).
+     *
+     * @return quantos foram concluídos (PENDING) ou expirados nesta execução
+     */
+    public int resumeStuckCreations(Duration grace, int limit) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("resumeStuckCreations must not run inside a transaction");
+        }
+        List<Payment> stuck = paymentRepository.findCreatingCreatedBefore(now().minus(grace), limit);
+        int resolved = 0;
+        for (Payment payment : stuck) {
+            try {
+                if (charge(payment).getStatus() != PaymentStatus.CREATING) {
+                    resolved++;
+                }
+            } catch (PaymentProviderUnavailableException e) {
+                // continua CREATING; próxima execução tenta de novo
+            } catch (PaymentProviderRejectedException e) {
+                resolved++; // descartado
+            } catch (RuntimeException e) {
+                log.error("payment.resume_failed paymentId={}", payment.getId(), e);
+            }
+        }
+        return resolved;
+    }
+
+    private Instant now() {
+        return clock.instant().truncatedTo(ChronoUnit.MICROS);
     }
 
     /**

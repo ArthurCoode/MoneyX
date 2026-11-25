@@ -39,7 +39,7 @@ public class SandboxPixProvider implements PixProvider {
     @Override
     public PixCharge createCharge(PixChargeRequest request) {
         String txid = generateTxid();
-        return new PixCharge(txid, PixBrCode.build(PIX_KEY, MERCHANT_NAME, MERCHANT_CITY, request.amount(), txid));
+        return PixCharge.local(NAME, txid, PixBrCode.build(PIX_KEY, MERCHANT_NAME, MERCHANT_CITY, request.amount(), txid));
     }
 
     /**

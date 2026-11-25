@@ -4,8 +4,7 @@ import com.moneyx.merchant.domain.Merchant;
 import com.moneyx.merchant.repository.MerchantRepository;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
-import com.moneyx.payment.provider.PixChargeRequest;
-import com.moneyx.payment.provider.SandboxPixProvider;
+import com.moneyx.payment.domain.PaymentFixtures;
 import com.moneyx.payment.domain.PaymentStatus;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,16 +55,9 @@ class PaymentRepositoryTest {
                 new Merchant("Loja Pagamentos LTDA", "55566677788", "payment-test@moneyx.dev"));
     }
 
-    /** Anexa a cobrança do provedor de sandbox, como o PaymentService faz antes de salvar. */
-    private static Payment charged(Payment payment) {
-        payment.attachPixCharge(new SandboxPixProvider().createCharge(new PixChargeRequest(
-                payment.getId(), payment.getAmount(), payment.getExpiresAt(), payment.getDescription())));
-        return payment;
-    }
-
     private Payment savedPayment() {
-        Payment payment = paymentRepository.saveAndFlush(charged(Payment.create(
-                merchant.getId(), 4990, PaymentCurrency.BRL, "Pedido 123", "order-123", null, NOW)));
+        Payment payment = paymentRepository.saveAndFlush(
+                PaymentFixtures.pending(merchant.getId(), 4990, "Pedido 123", "order-123", null, NOW));
         entityManager.clear(); // força a próxima leitura a vir do banco, e não do cache do JPA
         return payment;
     }
@@ -115,7 +107,7 @@ class PaymentRepositoryTest {
 
     @Test
     void databaseRejectsPaymentForNonexistentMerchant() {
-        Payment orphan = charged(Payment.create(UUID.randomUUID(), 4990, PaymentCurrency.BRL, null, null, null, NOW));
+        Payment orphan = PaymentFixtures.pending(UUID.randomUUID(), 4990, NOW);
 
         assertThatThrownBy(() -> paymentRepository.saveAndFlush(orphan))
                 .isInstanceOf(DataIntegrityViolationException.class);

@@ -4,6 +4,7 @@ import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.merchant.service.MerchantService;
 import com.moneyx.payment.domain.Payment;
 import com.moneyx.payment.domain.PaymentCurrency;
+import com.moneyx.payment.domain.PaymentFixtures;
 import com.moneyx.payment.domain.PaymentStatus;
 import com.moneyx.payment.exception.InvalidCursorException;
 import com.moneyx.payment.exception.PaymentExpiredException;
@@ -59,7 +60,7 @@ class PaymentQueryAndCancelControllerTest {
     private final UUID paymentId = UUID.randomUUID();
 
     private Payment newPayment() {
-        return Payment.create(merchantId, 4990, PaymentCurrency.BRL, "Pedido 1", "order-1", null, NOW);
+        return PaymentFixtures.pending(merchantId, 4990, "Pedido 1", "order-1", null, NOW);
     }
 
     // ---------- GET /v1/payments/{id} ----------

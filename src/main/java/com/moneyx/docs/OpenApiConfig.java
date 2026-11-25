@@ -90,6 +90,14 @@ public class OpenApiConfig {
                         .addResponses("TooManyRequests", problem("Limite de tentativas atingido.")
                                 .addHeaderObject("Retry-After", new Header()
                                         .description("Segundos até poder tentar de novo.")
+                                        .schema(new IntegerSchema())))
+                        .addResponses("BadGateway", problem("O provedor de Pix recusou a cobrança (`payment_provider_error`). "
+                                + "Nada foi criado e a Idempotency-Key ficou livre."))
+                        .addResponses("ServiceUnavailable", problem("O provedor de Pix está fora do ar "
+                                + "(`payment_provider_unavailable`). O pagamento existe com status `CREATING`: repita com a "
+                                + "MESMA Idempotency-Key (ou consulte depois) para recebê-lo pronto.")
+                                .addHeaderObject("Retry-After", new Header()
+                                        .description("Segundos até tentar de novo.")
                                         .schema(new IntegerSchema()))));
     }
 
