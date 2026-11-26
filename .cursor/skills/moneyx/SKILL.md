@@ -1281,6 +1281,65 @@ Pendências e próximos itens da Fase 7 (evolução):
 - [x] Migrar para Java 25 LTS (pom, CI, Dockerfile; 2026-11-25).
 - [ ] Desenvolver dashboard.
 
+### Fase 8 — Frontend (iniciada em 2026-11-26)
+
+Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
+
+#### Decisões (2026-11-26)
+- **Monorepo:** pasta `frontend/` (minúsculas) na raiz deste repositório. O backend continua na raiz (não mover para
+  `backend/` agora). Imagem Docker, job de CI (filtrado por caminho) e entrada npm do Dependabot próprios.
+  `frontend/` fica fora do `.dockerignore`/imagem do backend; `node_modules/` no `.gitignore`.
+- **Stack:** TypeScript + **Next.js** (React). 3D com React Three Fiber (Three.js); animação de rolagem com GSAP;
+  microinterações com Motion. Node 26 LTS na máquina.
+- **Fronteira com o backend:** o frontend conhece o backend SÓ pelo contrato HTTP. Cliente/tipos TypeScript
+  **gerados do `src/test/resources/openapi/moneyx-api.json`** (se a API mudar, o build do frontend quebra). Nenhuma
+  regra de negócio duplicada no frontend.
+- **Segurança:** API Keys (`mx_test_`/`mx_live_`) são segredos de servidor e **nunca** vão para o navegador. O
+  dashboard usa o servidor do Next.js como **BFF** (cookie de sessão `HttpOnly`; as chamadas à API Java saem do
+  servidor). Login do comerciante: a decidir (hoje só existe API Key).
+- **Paleta "Midnight Emerald"** (escura primeiro; modo claro do dashboard depois). Sempre via tokens CSS
+  (`--color-*`), nunca cores soltas nos componentes:
+
+| Token | Cor | Uso |
+|---|---|---|
+| `--color-bg` | `#070B14` | fundo da página |
+| `--color-surface` | `#0F1626` | cards, painéis |
+| `--color-border` | `#1E293B` | divisórias |
+| `--color-text` | `#E6EDF7` | texto principal |
+| `--color-text-muted` | `#8A97AD` | legendas |
+| `--color-primary` | `#12D6A0` | ações, PAID, destaques |
+| `--color-accent` | `#7C5CFF` | brilho 3D, partículas |
+| `--color-info` | `#22B8F0` | meio do gradiente, links |
+| `--color-warning` | `#F5B83D` | PENDING, avisos |
+| `--color-danger` | `#FF5C7A` | erros, CANCELED/EXPIRED |
+| gradiente herói | `#12D6A0 → #22B8F0 → #7C5CFF` | landing, cena 3D |
+
+  Regras: contraste WCAG AA (texto >= 4,5:1); estado nunca só pela cor (texto + ícone); não usar o teal oficial do
+  Pix (`#32BCAD`) como cor da marca; respeitar `prefers-reduced-motion` nas animações/3D.
+- **Login do comerciante no dashboard:** e-mail + senha (decidido em 2026-11-26), com hash forte, rate limit e sessão
+  em cookie `HttpOnly` mantida pelo BFF. Etapa própria no backend.
+
+#### Etapas
+- [x] **8a** (2026-11-26) Estrutura: `frontend/` com Next.js 16.4.6, React 19.1.10, TypeScript **5.9.3** (o 6/7 não
+  servem: `typescript-eslint` aceita até <6.1 e `openapi-typescript` 7.13 exige ^5), ESLint 10.15.0 (exceção de 13 dias
+  ao cooldown por correção de segurança no `minimatch`), Vitest + Testing Library, Playwright, three/R3F/drei, GSAP,
+  Motion, openapi-typescript/openapi-fetch. Versões EXATAS (`.npmrc save-exact`). Tokens em `src/styles/tokens.css`;
+  fontes Inter/Space Grotesk/JetBrains Mono via `next/font` (baixadas no build). `next.config.ts`: sem `X-Powered-By`,
+  `output: standalone`, headers nosniff/no-referrer/DENY/Permissions-Policy (CSP com nonce vem com o BFF).
+  Tipos da API: `npm run api:types` gera `src/lib/api/schema.d.ts` do contrato (versionado; o CI regenera e falha se
+  diferir). Backend: `PaymentView.status`/`currency` ganharam `@Schema(allowableValues)` (o contrato passou a listar os
+  valores) + `PaymentViewContractTest` garante que batem com os enums. Primeiro componente: `StatusBadge` (texto +
+  ícone; `satisfies Record<PaymentStatus,...>` acusa status novo sem tratamento). CI: workflow `frontend.yml`
+  (paths: `frontend/**` e o contrato) com `npm ci`, tipos em dia, lint sem avisos, typecheck, testes, build e
+  `npm audit --omit=dev --audit-level=high`; o `ci.yml` ignora mudanças só no frontend/.cursor. Dependabot npm.
+  `.dockerignore` do backend exclui `frontend/`; `.gitattributes` força LF em `frontend/**`.
+- [ ] **8b** Backend: login do comerciante (senha com hash, rate limit, sessão para o BFF). Decisões a trazer.
+- [ ] **8c** Landing page com 3D (R3F) e animações de rolagem (GSAP), respeitando `prefers-reduced-motion`.
+- [ ] **8d** BFF no Next.js (cookie HttpOnly, CSP com nonce) + telas de cadastro e login.
+- [ ] **8e** Dashboard: pagamentos (lista/detalhe/cancelar), API Keys, webhooks e eventos.
+- [ ] **8f** Imagem Docker do frontend + Compose + testes ponta a ponta (Playwright).
+- Pendência visual: trocar os ícones de texto do `StatusBadge` por SVG (o ⌛ aparece como emoji colorido).
+
 ## 12. Diretrizes de Git
 
 - **Decisão atual:** enquanto o projeto estiver em fase de aprendizado/ambiente de testes, os commits são feitos diretamente na `main`, sem abertura de PR.
