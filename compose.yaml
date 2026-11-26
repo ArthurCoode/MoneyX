@@ -1,6 +1,6 @@
-# Ambiente local completo: PostgreSQL + Redis (rate limit) + Mailpit (e-mail de dev) + aplicação MoneyX.
+# Ambiente local completo: PostgreSQL + Redis (rate limit) + Mailpit (e-mail de dev) + API MoneyX + frontend (Next.js).
 #
-#   docker compose up -d --build     → sobe tudo (compila a imagem da app se o código mudou)
+#   docker compose up -d --build     → sobe tudo (compila as imagens se o código mudou): http://localhost:3000
 #   docker compose up -d postgres    → só o banco (para rodar a app pelo IntelliJ / mvnw)
 #
 # O Compose lê o arquivo .env desta pasta sozinho. "${VAR:?mensagem}" faz o Compose RECUSAR subir com a mensagem
@@ -77,8 +77,10 @@ services:
       # Rate limit do cadastro no Redis (pelo nome do serviço).
       MONEYX_RATE_LIMIT_STORE: redis
       MONEYX_REDIS_HOST: redis
-      # Proxies confiáveis para X-Forwarded-For/Proto (regex). Vazio = nenhum (padrão seguro).
-      MONEYX_TRUSTED_PROXIES: ${MONEYX_TRUSTED_PROXIES:-}
+      # Proxies confiáveis para X-Forwarded-For/Proto (regex). Padrão: SÓ o frontend (IP fixo abaixo), que repassa o IP
+      # real do visitante (o guarda do frontend sobrescreve qualquer X-Forwarded-For forjado). Assim os limites por IP
+      # valem por visitante, e não para o frontend inteiro.
+      MONEYX_TRUSTED_PROXIES: ${MONEYX_TRUSTED_PROXIES:-172\.30\.0\.10}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
       MONEYX_WEBHOOK_ENCRYPTION_KEY: ${MONEYX_WEBHOOK_ENCRYPTION_KEY:?defina MONEYX_WEBHOOK_ENCRYPTION_KEY no .env}
       # Opcional: só durante a rotação da chave (vazio = nenhuma chave anterior).
@@ -103,6 +105,45 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+  # Landing + painel do comerciante + BFF (Next.js). Fala com a API pela rede interna (http://app:8080); o navegador
+  # só fala com o frontend. Mesmo endurecimento da app.
+  frontend:
+    build: ./frontend
+    image: moneyx-frontend:local
+    container_name: moneyx-frontend
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      MONEYX_API_URL: http://app:8080
+      # Endereço da API que o NAVEGADOR usa (link da documentação na landing).
+      MONEYX_PUBLIC_API_URL: ${MONEYX_PUBLIC_BASE_URL:-http://localhost:8080}
+      # "true" só com um proxy confiável NA FRENTE do frontend (que já escreve o X-Forwarded-For certo).
+      MONEYX_TRUST_FORWARDED_FOR: ${MONEYX_TRUST_FORWARDED_FOR:-false}
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      default:
+        # IP fixo: é o único em que a API confia para ler o X-Forwarded-For (MONEYX_TRUSTED_PROXIES).
+        ipv4_address: 172.30.0.10
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+# Rede com faixa fixa para o frontend ter IP conhecido. Se 172.30.0.0/24 já existir na sua máquina, troque aqui, no
+# ipv4_address do frontend e no MONEYX_TRUSTED_PROXIES.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   moneyx_postgres_data:
