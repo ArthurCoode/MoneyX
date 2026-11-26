@@ -59,8 +59,9 @@
   position: absolute;
   inset: 0 calc(50% - 50vw);
   z-index: -1;
-  background: color-mix(in srgb, var(--color-bg) 75%, transparent);
-  backdrop-filter: blur(10px);
+  /* Fundo OPACO e sem backdrop-filter: o desfoque seria refeito a cada quadro do canvas 3D logo abaixo (caro em GPU
+     integrada; medido em 2026-11-27); e, sem desfoque, um fundo translúcido deixava o texto vazar por baixo. */
+  background: var(--color-bg);
   border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
 }
 
@@ -123,7 +124,7 @@
   text-decoration: none;
   transition:
     transform var(--duration-fast) var(--ease-out),
-    filter var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out);
 }
 
@@ -142,10 +143,12 @@
   color: var(--color-primary-contrast);
 }
 
-.cta:hover,
-.ctaSmall:hover {
-  filter: brightness(1.08);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .cta:hover,
+  .ctaSmall:hover {
+    background-color: color-mix(in srgb, var(--color-primary) 88%, white);
+    transform: translateY(-2px);
+  }
 }
 
 .ctaGhost {
@@ -211,10 +214,9 @@
   inset: 12%;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 40% 40%, color-mix(in srgb, var(--color-primary) 45%, transparent), transparent 55%),
-    radial-gradient(circle at 65% 65%, color-mix(in srgb, var(--color-text) 18%, transparent), transparent 60%);
-  filter: blur(48px);
-  opacity: 0.5;
+    radial-gradient(circle at 45% 45%, color-mix(in srgb, var(--color-primary) 26%, transparent), transparent 62%),
+    radial-gradient(circle at 62% 62%, color-mix(in srgb, var(--color-text) 8%, transparent), transparent 66%);
+  /* Sem filter: blur(): o gradiente radial já é suave e não obriga o navegador a desfocar uma área grande. */
 }
 
 /* Selo em pílula com um ponto limão pulsando (o pulso some com "reduzir movimento"). */
@@ -235,19 +237,33 @@
   text-transform: uppercase;
 }
 
-.eyebrow::before {
-  content: "";
+.dot {
+  position: relative;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--color-primary);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 60%, transparent);
-  animation: pulse 2s infinite;
+}
+
+/* Anel do pulso: anima SÓ transform e opacity (feitos pela GPU, sem repintar a página). Animar box-shadow repintava
+   a cada quadro. */
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: pulse 2s var(--ease-out) infinite;
 }
 
 @keyframes pulse {
-  70% {
-    box-shadow: 0 0 0 8px transparent;
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(3);
+    opacity: 0;
   }
 }
 
@@ -324,36 +340,42 @@
   counter-reset: none;
 }
 
+/* O <li> (.step/.feature) é o que o GSAP revela; o efeito de hover fica no .cardInner DENTRO dele. Assim o
+   transform inline do GSAP e a transição CSS do hover nunca disputam a mesma propriedade (era o "hover bugado"). */
 .step,
 .feature {
+  display: flex;
+}
+
+.cardInner {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-6);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--color-surface) 85%, transparent);
+  background: var(--color-surface);
   transition:
     border-color var(--duration-normal) var(--ease-out),
     transform var(--duration-normal) var(--ease-out),
-    background var(--duration-normal) var(--ease-out);
+    background-color var(--duration-normal) var(--ease-out);
 }
 
-.step:hover,
-.feature:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
-  background: var(--color-surface-raised);
-  transform: translateY(-3px);
+@media (hover: hover) {
+  .cardInner:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+    background-color: var(--color-surface-raised);
+    transform: translateY(-4px);
+  }
 }
 
-.step h3,
-.feature h3 {
+.cardInner h3 {
   margin: 0;
   font-size: 1.125rem;
 }
 
-.step p,
-.feature p {
+.cardInner p {
   margin: 0;
   color: var(--color-text-muted);
   line-height: 1.6;

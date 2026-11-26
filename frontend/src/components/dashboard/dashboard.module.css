@@ -13,7 +13,10 @@
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
-  transition: filter var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .button:disabled {
@@ -28,7 +31,7 @@
 }
 
 .primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background-color: color-mix(in srgb, var(--color-primary) 88%, white);
 }
 
 .secondary {
@@ -93,6 +96,9 @@
   color: var(--color-text-muted);
   text-decoration: none;
   font-weight: 500;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
 }
 
 .navLink:hover {

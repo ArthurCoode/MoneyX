@@ -62,11 +62,14 @@
   font: inherit;
   font-weight: 700;
   cursor: pointer;
-  transition: filter var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .button:hover:not(:disabled) {
-  filter: brightness(1.05);
+  background-color: color-mix(in srgb, var(--color-primary) 88%, white);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 

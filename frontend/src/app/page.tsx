@@ -85,7 +85,10 @@ export default async function Home() {
         <section className={styles.hero} aria-labelledby="hero-title">
           <HeroVisual />
           <div className={styles.heroCopy}>
-            <p className={styles.eyebrow}>Pagamentos Pix por API</p>
+            <p className={styles.eyebrow}>
+              <span className={styles.dot} aria-hidden="true" />
+              Pagamentos Pix por API
+            </p>
             <h1 id="hero-title" className={styles.title}>
               Pix para o seu negócio, <span className={styles.gradient}>sem atrito.</span>
             </h1>
@@ -118,11 +121,13 @@ export default async function Home() {
           <ol className={styles.steps}>
             {STEPS.map((step, index) => (
               <li key={step.title} className={styles.step} data-reveal>
-                <span className={styles.stepNumber} aria-hidden="true">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <h3>{step.title}</h3>
-                <p>{step.text}</p>
+                <div className={styles.cardInner}>
+                  <span className={styles.stepNumber} aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                </div>
               </li>
             ))}
           </ol>
@@ -153,8 +158,10 @@ export default async function Home() {
           <ul className={styles.features}>
             {FEATURES.map((feature) => (
               <li key={feature.title} className={styles.feature} data-reveal>
-                <h3>{feature.title}</h3>
-                <p>{feature.text}</p>
+                <div className={styles.cardInner}>
+                  <h3>{feature.title}</h3>
+                  <p>{feature.text}</p>
+                </div>
               </li>
             ))}
           </ul>

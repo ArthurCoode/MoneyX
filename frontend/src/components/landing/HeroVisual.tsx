@@ -21,9 +21,15 @@ export function HeroVisual() {
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Detecção só no navegador; setState aqui é o jeito de sincronizar com um sistema externo (o WebGL).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setWebgl(hasWebGL());
+    // Só carrega o 3D quando o navegador fica OCIOSO: baixar e compilar o three.js (shaders) gerava tarefas longas de
+    // até 255 ms logo na abertura, competindo com a página ficar clicável. O fundo estático cobre esse intervalo.
+    const start = () => setWebgl(hasWebGL());
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(start, { timeout: 1500 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = setTimeout(start, 300);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {

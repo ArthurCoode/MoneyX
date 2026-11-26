@@ -29,6 +29,8 @@ test.describe("landing page (8c)", () => {
     }
     // A cena é decorativa: escondida dos leitores de tela.
     await expect(visual).toHaveAttribute("aria-hidden", "true");
+    // O indicador de devtools do Next (o "N" no canto) não aparece para o visitante (devIndicators: false).
+    await expect(page.locator("[data-next-badge-root]")).toBeHidden();
 
     await page.waitForTimeout(500);
     expect(errors).toEqual([]);
@@ -67,6 +69,21 @@ test.describe("landing page (8c)", () => {
     await page.goto("/");
     await page.getByRole("banner").getByRole("link", { name: "Entrar" }).click();
     await expect(page).toHaveURL(/\/entrar$/);
+  });
+
+  test("depois da revelação, o GSAP não deixa estilo inline e o hover dos cartões funciona", async ({ page }) => {
+    await page.goto("/");
+    const card = page.locator("#recursos li").first();
+    await card.scrollIntoViewIfNeeded();
+    // Espera a revelação ACONTECER e terminar (0,8 s + escalonamento). Checar antes dava falso positivo: o atributo
+    // ainda estava vazio porque o GSAP nem tinha começado (achado por mutação).
+    await page.waitForTimeout(1800);
+    expect((await card.getAttribute("style")) ?? "").not.toMatch(/transform|opacity/);
+
+    const inner = card.locator("div").first();
+    await inner.hover();
+    // Regressão de 2026-11-27: o transform inline do GSAP vencia o CSS e o cartão não subia.
+    await expect.poll(() => inner.evaluate((el) => getComputedStyle(el).transform)).toBe("matrix(1, 0, 0, 1, 0, -4)");
   });
 
   test("celular: sem rolagem lateral e com acesso ao login", async ({ page }) => {

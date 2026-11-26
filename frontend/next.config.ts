@@ -15,6 +15,9 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Não anunciar a tecnologia ("X-Powered-By: Next.js").
   poweredByHeader: false,
+  // O Next 16 mostrava o indicador de devtools (o "N" no canto) até no build de produção (achado em 2026-11-27).
+  // Visitante não deve ver ferramenta de desenvolvimento.
+  devIndicators: false,
   // Imagem Docker enxuta: o build gera um servidor Node autocontido em .next/standalone.
   output: "standalone",
   async headers() {

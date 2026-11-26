@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Float, Sparkles } from "@react-three/drei";
+import { Float } from "@react-three/drei";
 import { useMemo, useRef } from "react";
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, type Group, type Points } from "three";
 
@@ -18,7 +18,8 @@ const PRIMARY = "#d4ff3a";
 const INFO = "#ffffff";
 const ACCENT = "#8fbf1a";
 
-const PARTICLES = 900;
+// 600 (eram 900): a espiral continua cheia e a GPU integrada agradece.
+const PARTICLES = 600;
 
 function FlowParticles() {
   const points = useRef<Points>(null);
@@ -112,7 +113,8 @@ export default function HeroScene({ active }: { active: boolean }) {
   return (
     <Canvas
       camera={{ position: [0, 0, 6.2], fov: 45 }}
-      dpr={[1, 2]}
+      // Até 1,5x a resolução (era 2x): em tela de alta densidade, 2x = 4 vezes mais pixels para desenhar a cada quadro.
+      dpr={[1, 1.5]}
       gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
       frameloop={active ? "always" : "never"}
       aria-hidden="true"
@@ -122,7 +124,6 @@ export default function HeroScene({ active }: { active: boolean }) {
       <pointLight position={[-4, -2, 3]} intensity={30} color={ACCENT} />
       <Rings />
       <FlowParticles />
-      <Sparkles count={40} scale={6} size={2} speed={0.3} color={ACCENT} opacity={0.6} />
     </Canvas>
   );
 }
