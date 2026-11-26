@@ -451,7 +451,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V16. A próxima é `V17__...`.
+- Aplicadas: V1 a V17. A próxima é `V18__...`.
 
 ### Testes
 
@@ -1333,7 +1333,37 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
   (paths: `frontend/**` e o contrato) com `npm ci`, tipos em dia, lint sem avisos, typecheck, testes, build e
   `npm audit --omit=dev --audit-level=high`; o `ci.yml` ignora mudanças só no frontend/.cursor. Dependabot npm.
   `.dockerignore` do backend exclui `frontend/`; `.gitattributes` força LF em `frontend/**`.
-- [ ] **8b** Backend: login do comerciante (senha com hash, rate limit, sessão para o BFF). Decisões a trazer.
+- [x] **8b** (2026-11-26) Backend: login do comerciante. Decisões do desenvolvedor: **Argon2id**; senha no cadastro +
+  link por e-mail para definir/redefinir; sessão **6 h sem uso / 24 h no máximo** (mais longa que o comum em painéis
+  financeiros, 15–30 min; compensado por logout imediato, redefinição que derruba todas as sessões e cookie
+  HttpOnly/Secure/SameSite no BFF); limite **por IP + por e-mail**.
+  - **V17:** `merchants.password_hash` (NULL = conta anterior à 8b, define pelo link), `merchant_sessions` (só o hash
+    do token, `last_used_at`, `expires_at`, `revoked_at`), `password_reset_tokens` (1 h, uso único) e
+    `webhook_endpoint_history.session_id` (autor = API Key OU sessão; ações do sistema sem autor; CHECK novo).
+  - **Senha:** `PasswordPolicy` (12–128 caracteres contados como caracteres, não bytes; não pode ser o e-mail; sem regras
+    de composição, como o NIST 800-63B). Hash `{argon2}` via `DelegatingPasswordEncoder` + `Argon2PasswordEncoder(16,
+    32, 1, 19456, 2)` (mínimo OWASP: 19 MiB, t=2, p=1). Dependência `bcprov-jdk18on` 1.87 (versão fixa no pom).
+    `POST /v1/merchants` exige `password`; `register(...)` sem senha continua existindo (testes e contas antigas).
+    **Bug achado pelos testes:** atribuir o hash DEPOIS do save não gravava (a verificação de e-mail roda um UPDATE
+    `@Modifying(clearAutomatically)` que limpa o contexto do JPA e desanexa o Merchant) → o hash entra antes do 1º save.
+  - **Sessão:** `POST /v1/sessions` (público) → 201 `{id, merchantId, token "mx_sess_...", expiresAt, idleTimeout}`,
+    `no-store`. Mesma resposta 401 `invalid_credentials` para e-mail inexistente, conta sem senha e senha errada, com
+    o Argon2 rodando contra um hash falso quando não há conta (tempo igual). Argon2 FORA de transação. O token vai no
+    mesmo `Authorization: Bearer` (o filtro reconhece o prefixo `mx_sess_`); `last_used_at` gravado no máximo 1 vez
+    por minuto. Sessão age como chave de teste (`live=false`). `DELETE /v1/sessions/current` → 204 (idempotente; com
+    API Key não faz nada).
+  - **Limites:** `LoginRateLimiter` (security) implementa a porta `LoginRateLimits` (merchant): login 20/IP (+1 a cada
+    30 s) e 10/e-mail (+1 a cada 90 s = 10 a cada 15 min); redefinição 5/IP (+1/2 min) e 3/e-mail (+1/20 min). Toda
+    tentativa conta; o balde por e-mail existe para qualquer texto (não revela conta). `RateLimiterFactory` cria todos
+    os limitadores no armazenamento configurado (memory/redis), cada um com o seu prefixo. 429 `rate_limit_exceeded`
+    + Retry-After.
+  - **Redefinição:** `POST /v1/merchants/password-reset` (público, 202 SEMPRE) e `/confirm` (`{token, newPassword}` →
+    204; troca a senha, revoga TODAS as sessões, confirma o e-mail; 400 `invalid_reset_token`/`reset_token_expired`;
+    senha fraca → 400 `invalid_request` e o link continua valendo). Link para o FRONTEND:
+    `MONEYX_DASHBOARD_BASE_URL` (padrão http://localhost:3000) + `/redefinir-senha?token=`.
+  - Erros de conta no `AccountExceptionHandler` (restrito aos 3 controllers de conta). DTOs com senha/token sobrescrevem
+    `toString`. `ObservabilityIntegrationTest` agora também prova que a senha nunca vai para o log.
+  - Testes: `DashboardLoginIntegrationTest` (20, banco + filtro reais), `MerchantSessionTest` (unidade).
 - [ ] **8c** Landing page com 3D (R3F) e animações de rolagem (GSAP), respeitando `prefers-reduced-motion`.
 - [ ] **8d** BFF no Next.js (cookie HttpOnly, CSP com nonce) + telas de cadastro e login.
 - [ ] **8e** Dashboard: pagamentos (lista/detalhe/cancelar), API Keys, webhooks e eventos.
