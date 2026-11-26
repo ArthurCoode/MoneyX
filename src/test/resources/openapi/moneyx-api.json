@@ -421,6 +421,7 @@
             "type" : "string"
           },
           "currency" : {
+            "enum" : [ "BRL" ],
             "type" : "string"
           },
           "description" : {
@@ -445,6 +446,7 @@
             "$ref" : "#/components/schemas/Pix"
           },
           "status" : {
+            "enum" : [ "CREATING", "PENDING", "PAID", "CANCELED", "EXPIRED" ],
             "type" : "string"
           }
         },
