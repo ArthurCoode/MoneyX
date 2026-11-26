@@ -148,6 +148,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/merchants/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pedir o link de definir/redefinir senha
+         * @description Público. Responde 202 SEMPRE (exista a conta ou não), para não revelar quem tem conta. O link vale 1 h e substitui os anteriores. Muitos pedidos (por IP ou por e-mail) → 429 `rate_limit_exceeded` + `Retry-After`.
+         */
+        post: operations["requestPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/merchants/password-reset/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Salvar a nova senha (link do e-mail)
+         * @description Público. Troca a senha, encerra TODAS as sessões abertas e confirma o e-mail. Link inválido/usado → 400 `invalid_reset_token`; vencido → 400 `reset_token_expired`.
+         */
+        post: operations["confirmPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/merchants/verify-email": {
         parameters: {
             query?: never;
@@ -247,6 +287,46 @@ export interface paths {
          */
         post: operations["simulatePixPayment"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Entrar no dashboard (e-mail + senha)
+         * @description Público. Devolve o token da sessão (`mx_sess_...`) UMA vez (`Cache-Control: no-store`). Vale 6 h sem uso ou 24 h no total. E-mail inexistente e senha errada dão a mesma resposta: 401 `invalid_credentials`. Muitas tentativas (por IP ou por e-mail) → 429 `rate_limit_exceeded` + `Retry-After`.
+         */
+        post: operations["createSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Sair (encerrar a sessão atual)
+         * @description Revoga a sessão usada na requisição. Idempotente. Com uma API Key não há sessão: responde 204 sem efeito.
+         */
+        delete: operations["deleteCurrentSession"];
         options?: never;
         head?: never;
         patch?: never;
@@ -543,6 +623,10 @@ export interface components {
             /** Format: date-time */
             revokedAt?: string;
         };
+        ConfirmPasswordResetRequest: {
+            newPassword: string;
+            token: string;
+        };
         CreateApiKeyRequest: {
             /**
              * @description test (padrão) ou live
@@ -555,6 +639,7 @@ export interface components {
             /** Format: email */
             email: string;
             legalName: string;
+            password: string;
         };
         CreatePaymentRequest: {
             /** Format: int64 */
@@ -564,6 +649,10 @@ export interface components {
             /** Format: int64 */
             expiresInSeconds?: number;
             externalReference?: string;
+        };
+        CreateSessionRequest: {
+            email: string;
+            password: string;
         };
         CreateWebhookEndpointRequest: {
             enabledEvents?: string[];
@@ -635,6 +724,9 @@ export interface components {
             updatedAt?: string;
             volumeLimits?: components["schemas"]["VolumeLimits"];
         };
+        PasswordResetRequest: {
+            email: string;
+        };
         PaymentListResponse: {
             data?: components["schemas"]["PaymentView"][];
             hasMore?: boolean;
@@ -689,6 +781,17 @@ export interface components {
             /** @example about:blank */
             type?: string;
         };
+        SessionResponse: {
+            /** Format: date-time */
+            expiresAt?: string;
+            /** Format: uuid */
+            id?: string;
+            /** Format: int64 */
+            idleTimeout?: number;
+            /** Format: uuid */
+            merchantId?: string;
+            token?: string;
+        };
         VolumeLimits: {
             /** Format: int64 */
             daily?: number;
@@ -731,6 +834,8 @@ export interface components {
             id?: string;
             /** Format: date-time */
             occurredAt?: string;
+            /** Format: uuid */
+            sessionId?: string;
             /** @description url e enabledEvents naquele momento (nunca o segredo). */
             snapshot?: Record<string, never>;
         };
@@ -822,7 +927,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description API Key ausente, inválida ou revogada. */
+        /** @description Credencial ausente, inválida, revogada ou expirada (API Key ou sessão do dashboard); no login, e-mail ou senha errados (`invalid_credentials`). */
         Unauthorized: {
             headers: {
                 "WWW-Authenticate"?: string;
@@ -1046,6 +1151,57 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    requestPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Se a conta existir, o e-mail foi enviado. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    confirmPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmPasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Senha trocada. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     verifyEmail: {
         parameters: {
             query?: {
@@ -1213,6 +1369,54 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    createSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Sessão criada. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteCurrentSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sessão encerrada. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     retryWebhookDelivery: {
