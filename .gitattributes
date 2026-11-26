@@ -1,2 +1,4 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+# Frontend: sempre LF (os arquivos gerados, como src/lib/api/schema.d.ts, são comparados byte a byte no CI Linux).
+/frontend/** text=auto eol=lf
