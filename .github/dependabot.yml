@@ -37,6 +37,11 @@ updates:
       default-days: 7
       semver-major-days: 14
     open-pull-requests-limit: 5
+    # TypeScript MAIOR fica de fora: typescript-eslint (via eslint-config-next) aceita até <6.1 e openapi-typescript 7.13
+    # exige ^5 (PR #6, TS 7.0.2, reprovado no CI e fechado). Remover esta regra quando os dois suportarem a versão nova.
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
