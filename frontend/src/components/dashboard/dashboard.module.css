@@ -1,0 +1,476 @@
+/* Peças compartilhadas pelas telas do painel. Só tokens (var(--...)), nunca cores soltas. */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+
+.button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.primary {
+  composes: button;
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.secondary {
+  composes: button;
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--color-text-muted);
+}
+
+.danger {
+  composes: button;
+  background: transparent;
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 50%, transparent);
+}
+
+.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+.actionForm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.muted {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+/* ------------------------------------------------------------ navegação */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.navLink {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.navLink:hover {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+
+.navLink[aria-current="page"] {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+@media (max-width: 860px) {
+  .nav {
+    flex-direction: row;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .navLink {
+    white-space: nowrap;
+  }
+
+  .navLink[aria-current="page"] {
+    box-shadow: inset 0 -2px 0 var(--color-primary);
+  }
+}
+
+/* ------------------------------------------------------------ páginas */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.pageHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.pageTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  letter-spacing: -0.01em;
+}
+
+.backLink {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--color-text);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+@media (max-width: 560px) {
+  .card {
+    padding: var(--space-4);
+  }
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: var(--space-4);
+}
+
+/* Lista de propriedades (detalhe de pagamento, endpoint...). */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.facts dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.stat {
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 2.2vw, 1.625rem);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Colunas secundárias somem em telas estreitas (a tabela continua legível sem rolar para o lado). */
+@media (max-width: 560px) {
+  .hideSm {
+    display: none;
+  }
+
+  .table th,
+  .table td {
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .table th:first-child,
+  .table td:first-child {
+    padding-left: var(--space-3);
+  }
+
+  .table th:last-child,
+  .table td:last-child {
+    padding-right: var(--space-3);
+  }
+}
+
+/* ------------------------------------------------------------ tabelas */
+
+.tableWrap {
+  /* relative: o texto "visually-hidden" (position: absolute) fica preso aqui dentro; sem isto ele escapava da caixa
+     com rolagem e alargava a PÁGINA no celular. */
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover {
+  background: var(--color-surface-raised);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.table th.num {
+  text-align: right;
+}
+
+.rowLink {
+  color: var(--color-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.rowLink:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.empty {
+  padding: var(--space-8) var(--space-4);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ filtros e paginação */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.filter {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.filter:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+}
+
+.filter[aria-current="page"] {
+  color: var(--color-primary-contrast);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  font-weight: 600;
+}
+
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* ------------------------------------------------------------ segredo e código */
+
+.secretBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 50%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.secretValue {
+  padding: var(--space-3);
+  border: 1px dashed var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  word-break: break-all;
+  user-select: all;
+}
+
+.codeBlock {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ------------------------------------------------------------ formulários do painel */
+
+.select {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.fieldset legend {
+  margin-bottom: var(--space-2);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+}
+
+/* Linha do tempo (histórico do endpoint). */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0 0 0 var(--space-4);
+  border-left: 2px solid var(--color-border);
+  list-style: none;
+}
+
+.timeline li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.tagOk {
+  composes: tag;
+  color: var(--color-primary);
+  border-color: currentColor;
+}
+
+.tagWarn {
+  composes: tag;
+  color: var(--color-warning);
+  border-color: currentColor;
+}
+
+.tagBad {
+  composes: tag;
+  color: var(--color-danger);
+  border-color: currentColor;
+}
+
+.narrow {
+  max-width: 560px;
+}
+
+.caption {
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  text-align: left;
+}
+
+.wrapAnywhere {
+  overflow-wrap: anywhere;
+}
