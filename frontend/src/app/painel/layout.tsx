@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { logout } from "@/app/actions/auth";
+import { PanelNav } from "@/components/dashboard/PanelNav";
 import { requireMerchant } from "@/lib/server/merchant";
 import styles from "./painel.module.css";
 
@@ -22,7 +23,12 @@ export default async function PanelLayout({ children }: Readonly<{ children: Rea
           </form>
         </div>
       </header>
-      <main className={styles.content}>{children}</main>
+      <div className={styles.body}>
+        <aside className={styles.sidebar}>
+          <PanelNav />
+        </aside>
+        <main className={styles.content}>{children}</main>
+      </div>
     </div>
   );
 }

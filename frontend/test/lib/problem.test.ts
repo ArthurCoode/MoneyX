@@ -39,8 +39,9 @@ describe("problemToFormState", () => {
     expect(problemToFormState(400, { code: "invalid_reset_token" }, undefined).error).toContain("não é válido");
   });
 
-  it("explains a duplicate signup", () => {
-    expect(problemToFormState(409, {}, undefined).error).toContain("Já existe uma conta");
+  it("maps dashboard codes and a generic 409", () => {
+    expect(problemToFormState(409, { code: "last_active_api_key" }, undefined).error).toContain("última chave ativa");
+    expect(problemToFormState(409, {}, undefined).error).toContain("Recarregue");
   });
 });
 

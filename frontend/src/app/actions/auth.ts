@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ApiUnavailableError, moneyxApi } from "@/lib/server/api";
 import { clearSession, readSessionToken, saveSession } from "@/lib/server/session";
 import {
+  DUPLICATE_ACCOUNT_MESSAGE,
   type FormState,
   problemToFormState,
   retryAfterFrom,
@@ -63,6 +64,8 @@ export async function signup(_previous: SignupState, formData: FormData): Promis
   const created = await callApi(() => api.POST("/v1/merchants", { body: { legalName, document, email, password } }));
   if (created instanceof ApiUnavailableError) return { values, error: UNAVAILABLE_MESSAGE };
   if (!created.data) {
+    // 409 do cadastro = e-mail ou documento já usados (a API não manda `code` neste caso).
+    if (created.response.status === 409) return { values, error: DUPLICATE_ACCOUNT_MESSAGE };
     return problemToFormState(created.response.status, created.error, retryAfterFrom(created.response), values);
   }
 
