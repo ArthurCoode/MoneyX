@@ -87,7 +87,7 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 
 | Tecnologia | Responsabilidade |
 |---|---|
-| Java 21 LTS | Linguagem principal |
+| Java 25 LTS | Linguagem principal (desde 2026-11-25; antes 21) |
 | Spring Boot 4.1.2 | Framework backend |
 | Maven | Gerenciamento de dependências e build |
 | PostgreSQL 17 | Banco de dados principal |
@@ -107,7 +107,10 @@ Os módulos devem ter responsabilidades bem definidas e baixo acoplamento.
 
 ### Decisões importantes
 
-- Java 21 é a versão de desenvolvimento escolhida.
+- Java 25 LTS é a versão do projeto desde 2026-11-25 (pom `java.version`, CI `setup-java` 25, Dockerfile
+  `eclipse-temurin:25-jdk/jre-alpine` por digest). JDK 25 instalado na máquina (Temurin, winget) ao lado do 21:
+  `JAVA_HOME` precisa apontar para o 25 (IntelliJ: Project SDK 25). Aviso conhecido nos testes: Mockito carrega o
+  agente do ByteBuddy dinamicamente ("A Java agent has been loaded dynamically"); hoje é só aviso.
 - Spring Boot 4.1.2 é a versão atualmente gerada pelo Spring Initializr.
 - Não trocar versões sem avaliar compatibilidade e necessidade.
 - PostgreSQL será a fonte principal da verdade.
@@ -256,7 +259,8 @@ api  →  service  →  repository  →  domain
   plugin)? Conferir no navegador** (print headless do Edge + `chrome_debug.log` com `--enable-logging`): em 2026-11-21
   a página renderizou completa e sem violações. A Swagger UI chama `http://localhost:8080` (servidor fixo):
   aberta por `127.0.0.1:8080`, o "Try it out" seria barrado por `connect-src 'self'` (origem diferente).
-- **HSTS** só é enviado em HTTPS (correto). Atrás de proxy com TLS (Fase 7): configurar forwarded headers.
+- **HSTS** só é enviado em HTTPS (correto). Atrás de proxy com TLS: `MONEYX_TRUSTED_PROXIES` com o IP do proxy faz o
+  `X-Forwarded-Proto: https` valer (ver "Rate limiting do cadastro público").
 - **Log de requisição malformada:** o Tomcat (`Http11Processor`) registrava a LINHA do header inválido (com a API Key)
   em INFO na 1ª ocorrência e DEBUG depois → `logging.level.org.apache.coyote.http11.Http11Processor=WARN`.
   Acontece antes do nosso código: fora do alcance do `ObservabilityIntegrationTest`.
@@ -336,7 +340,12 @@ api  →  service  →  repository  →  domain
 
 - **R$ 200.000,00 por dia e R$ 2.000.000,00 por mês** por comerciante (`moneyx.payments.volume-limit.daily` / `.monthly`,
   centavos `long`; `PaymentVolumeLimitProperties`). Controle de risco contra cobranças em massa com chave roubada.
-  Limite por comerciante (coluna própria) fica para a Fase 7.
+  **Limite por comerciante (V15, 2026-11-25):** colunas opcionais `merchants.daily_volume_limit` e
+  `monthly_volume_limit` (centavos; NULL = global; CHECK > 0 e diário <= mensal). Ajuste só por SQL (não há área de
+  operador), ex.: `UPDATE merchants SET daily_volume_limit = 50000000 WHERE id = '...';`. Lidas na MESMA consulta
+  que tranca o comerciante (`lockMerchantForPaymentCreation` devolve uma projeção). A entidade `Merchant` não mapeia
+  essas colunas. O limite efetivo aparece em `GET /v1/merchants/me` (`volumeLimits`), via `PaymentVolumeLimitQuery`
+  (dependência nova `merchant.api → payment.service`, sem ciclo).
 - Conta pagamentos **criados e não cancelados** (PENDING, PAID, EXPIRED), por `created_at`. "Dia" e "mês" no fuso
   `moneyx.payments.volume-limit.zone` (padrão `America/Sao_Paulo`, sempre `ZoneId`, nunca deslocamento fixo).
 - Recusa: **422** `volume_limit_exceeded` com `period` (`daily`|`monthly`), `limit`, `remaining` (centavos) e `resetsAt`
@@ -362,7 +371,17 @@ api  →  service  →  repository  →  domain
 - **Toda tentativa conta**, inclusive 400/409 (o 409 é o que permite enumerar clientes); a recusa acontece antes do controller.
 - Recusa: **429** Problem Details `code: rate_limit_exceeded` + `Retry-After` em segundos **arredondado para cima**.
 - Chave = `ClientKey.of(request.getRemoteAddr())`: IPv4 como está; **IPv6 agrupado por /64**; `::ffff:a.b.c.d` = IPv4.
-  **`X-Forwarded-For` é ignorado** (o cliente pode forjar). Atrás de proxy (Fase 7): configurar proxies confiáveis.
+  **`X-Forwarded-For` só vale vindo de um proxy confiável** (`MONEYX_TRUSTED_PROXIES`, regex do Tomcat
+  RemoteIpValve; `server.forward-headers-strategy=native`). **Padrão VAZIO = ninguém é confiável.** Cuidado: o padrão
+  do PRÓPRIO Tomcat confia em toda rede privada (no Docker aceitaria XFF forjado vindo do host). Com proxy confiável,
+  `X-Forwarded-Proto: https` também liga o HSTS. Teste: `TrustedProxyIntegrationTest` (Tomcat real, os dois modos).
+- **Onde ficam os baldes (2026-11-25):** `moneyx.rate-limit.store` = `memory` (padrão, `TokenBucketRateLimiter`) ou
+  `redis` (`RedisTokenBucketRateLimiter`, o Compose usa). Interface `RateLimiter`. No Redis a conta é um script Lua
+  ATÔMICO (duas instâncias nunca gastam a mesma ficha), crédito em **microssegundos** inteiros (os números do Lua são
+  double, exatos até 2^53: µs desde 1970 cabem, ns não), `PEXPIRE` quando o balde estaria cheio (memória limitada).
+  **Redis fora do ar = fail-open** (permite e avisa no log; o limite não derruba o cadastro). Instante do Clock da app
+  (relógios sincronizados por NTP com várias instâncias). Health do Redis desligado (não essencial).
+  Teste: `RedisTokenBucketRateLimiterTest` (Redis real via Testcontainers; 2 "instâncias" x 25 threads = 5).
 - Crédito do balde em **nanossegundos inteiros (`long`)**, nunca `double`: com ponto flutuante, frações acumuladas
   atrasavam a ficha e o `Retry-After` mentia (bug encontrado pelo teste de taxa sustentada). Mesmo princípio do dinheiro em centavos.
 - `ConcurrentHashMap.compute` (atômico por chave): 50 tentativas simultâneas → exatamente 5 aceitas.
@@ -393,7 +412,20 @@ api  →  service  →  repository  →  domain
 ### API Keys: endpoints e regras
 
 - `POST /v1/api-keys` → 201, segredo apenas nesta resposta, `Cache-Control: no-store`.
-- `GET /v1/api-keys` → `{"data": [{id, prefix, active, createdAt, revokedAt}]}`, sem segredo nem hash.
+- `GET /v1/api-keys` → `{"data": [{id, prefix, mode, active, createdAt, revokedAt}]}`, sem segredo nem hash.
+- **Chaves `mx_live_` (2026-11-25):** `POST /v1/api-keys` com corpo opcional `{"mode": "live"}` (sem corpo = test).
+  Exige o **e-mail verificado** (senão 403 `email_not_verified`). O modo vem do próprio prefixo (`ApiKey.isLive`), sem
+  coluna nova; o principal ganhou `live` (`AuthenticatedMerchant`). Chave live em `/v1/sandbox/**` → 403
+  `sandbox_requires_test_key`. Limitação: fora isso, chave live e test ainda fazem o mesmo (não há separação de
+  dados test/live como no Stripe nem KYC de documentos).
+- **Verificação de e-mail (V16):** no cadastro, um token (32 bytes, guardado só o SHA-256, uso único, 24 h) é criado
+  na mesma transação e o e-mail com o link sai DEPOIS do commit (`@TransactionalEventListener AFTER_COMMIT`; falha de
+  envio só loga, sem o link). `GET /v1/merchants/verify-email?token=` é público, `no-store`, seguro de repetir
+  (antivírus que abre o link antes da pessoa); inválido/substituído → 400 `invalid_verification_token`, vencido → 400
+  `verification_token_expired`. `POST /v1/merchants/me/email-verification` reenvia (invalida os anteriores; 1 por
+  minuto → 429 `verification_email_rate_limited` + Retry-After; já verificado → 409 `email_already_verified`).
+  SMTP em dev = **Mailpit** no Compose (http://localhost:8025). `moneyx.mail.enabled=false` nos testes; health do
+  e-mail desligado. Link montado com `MONEYX_PUBLIC_BASE_URL`. FK dos tokens com `ON DELETE CASCADE`.
 - `DELETE /v1/api-keys/{id}` → 204 (idempotente); 404 se não existir ou for de outro comerciante.
 - Máximo de **5** chaves ativas por comerciante (`ApiKeyService.MAX_ACTIVE_KEYS_PER_MERCHANT`) → 409 `api_key_limit_reached`.
 - A última chave ativa não pode ser revogada → 409 `last_active_api_key`.
@@ -419,7 +451,7 @@ api  →  service  →  repository  →  domain
 - Ficam em `src/main/resources/db/migration`, no formato `V<n>__<descricao>.sql`.
 - Uma migration já aplicada nunca deve ser editada; mudanças geram uma nova versão.
 - Regras críticas (unicidade, valores permitidos) também são garantidas por constraints no banco.
-- Aplicadas: V1 a V14. A próxima é `V15__...`.
+- Aplicadas: V1 a V16. A próxima é `V17__...`.
 
 ### Testes
 
@@ -478,11 +510,11 @@ estar com permissão de execução no git (`git update-index --chmod=+x mvnw`).
 - Não adotar versão recém-publicada: preferir a mais nova com **~2 semanas** (`setup-java` v6.3.0 tinha 7 dias e foi
   preterida). O Dependabot aplica a mesma regra com `cooldown`.
 - Job paralelo `image`: `docker build` (prova que o Dockerfile constrói; nada é publicado) + **Trivy 0.76.2 pela imagem
-  oficial fixada por digest** (não pela action de terceiros), `--severity HIGH,CRITICAL --exit-code 0 --table-mode detailed`,
-  resultado no resumo da execução ("Nenhuma encontrada." quando vazio). **Só avisa** (`exit-code 0` +
-  `continue-on-error` para falhas do próprio Trivy). Em 2026-11-21: 0 HIGH/CRITICAL; 1 MEDIUM no `zlib` da base Alpine,
-  já corrigido na versão seguinte (some quando o Dependabot atualizar a imagem base). Tornar bloqueante quando o ruído
-  estiver conhecido.
+  oficial fixada por digest** (não pela action de terceiros), `--severity HIGH,CRITICAL --ignore-unfixed --exit-code 3
+  --table-mode detailed`, resultado no resumo da execução ("Nenhuma encontrada." quando vazio). **BLOQUEANTE desde
+  2026-11-25:** HIGH/CRITICAL com correção disponível reprova o build; falha do PRÓPRIO Trivy (código diferente de 3,
+  ex.: base de vulnerabilidades indisponível) só avisa. Validado extraindo o script do `ci.yml` nos 3 caminhos (limpa →
+  passa; MEDIUM forçado → reprova; imagem inexistente → avisa e passa). O MEDIUM do `zlib` não reprova (só HIGH/CRITICAL).
 - `.github/dependabot.yml`: maven, github-actions e docker; semanal (segunda 06:00, America/Sao_Paulo); minor/patch
   agrupados por ecossistema, major em PR separado; `cooldown` 7 dias (major do Maven 14). **Versões maiores do
   `eclipse-temurin` são ignoradas** (`ignore`): o Dependabot propôs Java 21 → 24 (não-LTS, PR #2 fechado); a versão do
@@ -645,6 +677,15 @@ e só precisam de `POSTGRES_PASSWORD`.
 | `MERCADOPAGO_WEBHOOK_SECRET` | assinatura secreta dos avisos do MP; vazia = `POST /v1/provider-webhooks/mercadopago` responde 404 |
 | `MONEYX_PIX_MERCADOPAGO_TEST_PAYER_FIRST_NAME` | SÓ no sandbox: `APRO` faz o MP aprovar sozinho |
 | `MONEYX_PIX_MERCADOPAGO_BASE_URL` | raiz da API (testes: endereço inválido simula o MP fora do ar) |
+
+**Infraestrutura (2026-11-25), todas opcionais (o Compose já define as do Redis e do e-mail):**
+
+| Variável | Uso |
+|---|---|
+| `MONEYX_TRUSTED_PROXIES` | regex dos IPs de proxy confiáveis (X-Forwarded-For/Proto); vazio = nenhum |
+| `MONEYX_RATE_LIMIT_STORE` | `memory` (padrão) ou `redis`; com `MONEYX_REDIS_HOST`/`MONEYX_REDIS_PORT` |
+| `MONEYX_MAIL_ENABLED` / `MONEYX_MAIL_HOST` / `MONEYX_MAIL_PORT` / `MONEYX_MAIL_FROM` | SMTP do e-mail de verificação (padrão `localhost:1025` = Mailpit publicado pelo Compose) |
+| `MONEYX_PUBLIC_BASE_URL` | endereço público da API no link do e-mail (padrão `http://localhost:8080`) |
 
 Para usar o MP sem tocar no `.env` (Git Bash): `MONEYX_PIX_PROVIDER=mercadopago docker compose up -d --build app`.
 Para voltar ao normal: `docker compose up -d app`.
@@ -828,7 +869,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - Enumeração: o `409` do cadastro público revela se documento/e-mail já existem.
 - Abuso: criação em massa de contas.
 - Mitigação: cadastro público gera apenas chaves de teste (`mx_test_`), sem movimentação real.
-  Rate limiting no cadastro implementado na Fase 6 (5 por IP + 1 a cada 2 min). Chaves `mx_live_` exigirão verificação (e-mail/KYC) na Fase 7.
+  Rate limiting no cadastro implementado na Fase 6 (5 por IP + 1 a cada 2 min). Chaves `mx_live_` exigem e-mail verificado desde 2026-11-25.
 
 #### Etapas
 
@@ -1015,7 +1056,7 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
     rodar com `-Dmercadopago.smoke=true` e `MERCADOPAGO_ACCESS_TOKEN` na sessão, comando no javadoc).
 - Só o texto é devolvido (sem imagem do QR); o comerciante gera a imagem a partir do `copyPaste`.
 - `POST /v1/sandbox/payments/{id}/pay` simula o pagamento: 200 (PAID); 404 se não existir/for de outro comerciante;
-  409 `payment_not_pending` (com `paymentStatus`) ou `payment_expired`. Bloquear para chaves `mx_live_` na Fase 7.
+  409 `payment_not_pending` (com `paymentStatus`) ou `payment_expired`. Chave `mx_live_` → 403 `sandbox_requires_test_key`.
 - Toda mudança de estado de pagamento usa `PaymentRepository.lockByIdAndMerchantId` (lock pessimista).
   O `@Version` é a segunda camada; `ObjectOptimisticLockingFailureException` vira 409 `concurrent_update`.
   Comprovado por mutação: sem o lock, o `@Version` ainda impede pagamento duplo, mas os concorrentes recebiam 500.
@@ -1224,16 +1265,15 @@ cancelado no MP antes de EXPIRED).
 
 Pendências e próximos itens da Fase 7 (evolução):
 - [ ] Teste real do aviso do MP: URL pública HTTPS (túnel), segredo no painel, confirmar o manifesto da assinatura [?].
-- [ ] Trivy bloqueante (e atualizar à mão a imagem do Trivy no `ci.yml`; MEDIUM do `zlib` na base Alpine).
-- [ ] Chaves `mx_live_` com verificação (e-mail/KYC) e bloqueio de `/v1/sandbox/**` para elas.
-- [ ] Limite de volume por comerciante (coluna própria).
-- [ ] Proxy de saída para webhooks (DNS rebinding), proxies confiáveis para o IP real no rate limit, HSTS atrás de
-  proxy (forwarded headers), rate limit em Redis se houver mais de uma instância.
-- [ ] Migrar para Java 25 LTS (etapa própria: pom, CI, Dockerfile).
+- [x] Trivy bloqueante (2026-11-25; imagem 0.76.2 já era a mais nova).
+- [x] Chaves `mx_live_` com verificação de e-mail (Mailpit em dev, V16) e bloqueio de `/v1/sandbox/**` (2026-11-25).
+  KYC de documentos fica fora.
+- [x] Limite de volume por comerciante (V15, ajuste por SQL; 2026-11-25).
+- [x] Proxies confiáveis (IP real no rate limit) + HSTS atrás de proxy (2026-11-25).
+- [x] Rate limit em Redis (opcional por configuração; o Compose usa; 2026-11-25).
+- [ ] Proxy de saída para webhooks (DNS rebinding): o desenvolvedor optou por NÃO fazer agora.
+- [x] Migrar para Java 25 LTS (pom, CI, Dockerfile; 2026-11-25).
 - [ ] Desenvolver dashboard.
-- [ ] Avaliar requisitos legais e regulatórios.
-- [ ] Avaliar viabilidade comercial.
-- [ ] Preparar eventual MVP.
 
 ## 12. Diretrizes de Git
 
