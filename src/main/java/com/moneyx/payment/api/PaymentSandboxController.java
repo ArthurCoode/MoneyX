@@ -1,5 +1,7 @@
 package com.moneyx.payment.api;
 
+import com.moneyx.payment.exception.SandboxRequiresTestKeyException;
+
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,12 +35,16 @@ public class PaymentSandboxController {
 
     /** Simula o pagador pagando o Pix. 200 com o pagamento já PAID. */
     @Operation(operationId = "simulatePixPayment", summary = "Simular o pagamento do Pix",
-            description = "SANDBOX: simula o pagador pagando o Pix. Só para cobranças do simulador local; uma cobrança de PSP real (ex.: Mercado Pago) responde 409 `sandbox_payment_not_supported`.")
+            description = "SANDBOX: simula o pagador pagando o Pix. Só para cobranças do simulador local; uma cobrança de PSP real (ex.: Mercado Pago) responde 409 `sandbox_payment_not_supported`. Só com chave de teste (`mx_test_`): chave `mx_live_` → 403 `sandbox_requires_test_key`.")
     @ApiResponse(responseCode = "200", description = "Pagamento PAID.")
+    @ApiResponse(responseCode = "403", ref = "#/components/responses/Forbidden")
     @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping("/{id}/pay")
     public PaymentView pay(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
+        if (principal.live()) {
+            throw new SandboxRequiresTestKeyException();
+        }
         return PaymentView.from(service.simulatePixPayment(principal.merchantId(), id));
     }
 }

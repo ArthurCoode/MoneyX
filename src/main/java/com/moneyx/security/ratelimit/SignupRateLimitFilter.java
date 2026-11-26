@@ -28,11 +28,11 @@ public class SignupRateLimitFilter extends OncePerRequestFilter {
     private static final RequestMatcher SIGNUP = PathPatternRequestMatcher.withDefaults()
             .matcher(HttpMethod.POST, "/v1/merchants");
 
-    private final TokenBucketRateLimiter limiter;
+    private final RateLimiter limiter;
     private final HandlerExceptionResolver exceptionResolver;
     private final Counter rejections;
 
-    public SignupRateLimitFilter(TokenBucketRateLimiter limiter, HandlerExceptionResolver exceptionResolver,
+    public SignupRateLimitFilter(RateLimiter limiter, HandlerExceptionResolver exceptionResolver,
                                  MeterRegistry meterRegistry) {
         this.limiter = limiter;
         this.exceptionResolver = exceptionResolver;
@@ -53,7 +53,7 @@ public class SignupRateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         // remoteAddr = o endereço da CONEXÃO. X-Forwarded-For é ignorado de propósito (ver ClientKey).
-        TokenBucketRateLimiter.Decision decision = limiter.tryAcquire(ClientKey.of(request.getRemoteAddr()));
+        RateLimiter.Decision decision = limiter.tryAcquire(ClientKey.of(request.getRemoteAddr()));
         if (decision.allowed()) {
             chain.doFilter(request, response);
             return;

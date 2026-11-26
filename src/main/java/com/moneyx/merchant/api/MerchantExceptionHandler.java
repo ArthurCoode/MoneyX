@@ -1,5 +1,9 @@
 package com.moneyx.merchant.api;
 
+import com.moneyx.merchant.exception.EmailVerificationException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
+
 import com.moneyx.merchant.exception.DuplicateMerchantException;
 import com.moneyx.merchant.exception.MerchantNotFoundException;
 import org.springframework.http.HttpStatus;
@@ -24,5 +28,18 @@ public class MerchantExceptionHandler {
     @ExceptionHandler(DuplicateMerchantException.class)
     public ProblemDetail handleDuplicate(DuplicateMerchantException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(EmailVerificationException.class)
+    public ResponseEntity<ProblemDetail> handleEmailVerification(EmailVerificationException ex) {
+        EmailVerificationException.Reason reason = ex.getReason();
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.valueOf(reason.status), ex.getMessage());
+        problem.setProperty("code", reason.code);
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(reason.status);
+        if (ex.getRetryAfter() != null) {
+            long seconds = Math.max(1, (ex.getRetryAfter().toMillis() + 999) / 1000);
+            response.header(HttpHeaders.RETRY_AFTER, Long.toString(seconds));
+        }
+        return response.body(problem);
     }
 }

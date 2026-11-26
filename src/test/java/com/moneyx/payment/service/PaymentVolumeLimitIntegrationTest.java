@@ -66,6 +66,9 @@ class PaymentVolumeLimitIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private PaymentVolumeLimitQuery limitQuery;
+
     private final List<UUID> createdMerchants = new ArrayList<>();
     private UUID merchantId;
     private int keySequence;
@@ -84,6 +87,49 @@ class PaymentVolumeLimitIntegrationTest {
             jdbc.update("DELETE FROM payments WHERE merchant_id = ?", id);
             jdbc.update("DELETE FROM merchants WHERE id = ?", id);
         }
+    }
+
+    // ---------- limite próprio do comerciante (V15) ----------
+
+    @Test
+    void aMerchantSpecificDailyLimitReplacesTheGlobalOneOnlyForThatMerchant() {
+        jdbc.update("UPDATE merchants SET daily_volume_limit = 50000 WHERE id = ?", merchantId);
+        UUID other = newMerchant();
+
+        create(50_000);                                 // R$ 500 = limite próprio exato
+        assertThatThrownBy(() -> create(100))
+                .isInstanceOfSatisfying(VolumeLimitExceededException.class, ex -> {
+                    assertThat(ex.getPeriod()).isEqualTo(Period.DAILY);
+                    assertThat(ex.getLimit()).isEqualTo(50_000);
+                });
+        // o outro comerciante continua com o global
+        service.create(other, "other-1", new CreatePaymentCommand(MAX_PER_PAYMENT, PaymentCurrency.BRL, null, null, null));
+    }
+
+    @Test
+    void aMerchantSpecificMonthlyLimitCanBeHigherThanTheGlobalOne() {
+        jdbc.update("UPDATE merchants SET daily_volume_limit = 300000000, monthly_volume_limit = 300000000 WHERE id = ?",
+                merchantId);
+        for (int i = 0; i < 3; i++) {
+            create(MAX_PER_PAYMENT);                    // R$ 300 mil no dia: passaria do global (R$ 200 mil)
+        }
+        assertThat(volume()).isEqualTo(3 * MAX_PER_PAYMENT);
+    }
+
+    @Test
+    void theEffectiveLimitsAreTheMerchantOnesWhenSetAndTheGlobalOnesOtherwise() {
+        assertThat(limitQuery.effectiveFor(merchantId)).isEqualTo(new VolumeLimits(DAILY, MONTHLY));
+        jdbc.update("UPDATE merchants SET monthly_volume_limit = 90000000 WHERE id = ?", merchantId);
+        assertThat(limitQuery.effectiveFor(merchantId)).isEqualTo(new VolumeLimits(DAILY, 90_000_000));
+    }
+
+    @Test
+    void theDatabaseRejectsInvalidMerchantLimits() {
+        assertThatThrownBy(() -> jdbc.update("UPDATE merchants SET daily_volume_limit = 0 WHERE id = ?", merchantId))
+                .hasMessageContaining("ck_merchants_daily_volume_limit");
+        assertThatThrownBy(() -> jdbc.update(
+                "UPDATE merchants SET daily_volume_limit = 2, monthly_volume_limit = 1 WHERE id = ?", merchantId))
+                .hasMessageContaining("ck_merchants_volume_limits_order");
     }
 
     // ---------- limite diário ----------

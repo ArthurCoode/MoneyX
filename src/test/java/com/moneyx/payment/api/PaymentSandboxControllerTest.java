@@ -132,4 +132,16 @@ class PaymentSandboxControllerTest {
 
         verifyNoInteractions(service);
     }
+
+    @Test
+    void liveKeysCannotUseTheSandbox() throws Exception {
+        UUID merchant = UUID.randomUUID();
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/v1/sandbox/payments/" + UUID.randomUUID() + "/pay")
+                        .with(com.moneyx.security.TestAuthentication.activeLiveMerchant(merchant)))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code")
+                        .value("sandbox_requires_test_key"));
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
 }

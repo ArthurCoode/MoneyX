@@ -67,9 +67,26 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
      *
      * SQL nativo sobre merchants: o módulo payment não importa o módulo merchant (mesmo padrão do webhook).
      */
-    @Query(value = "SELECT CAST(id AS VARCHAR) FROM merchants WHERE id = :merchantId FOR NO KEY UPDATE",
+    @Query(value = """
+            SELECT daily_volume_limit AS daily, monthly_volume_limit AS monthly
+            FROM merchants WHERE id = :merchantId FOR NO KEY UPDATE
+            """, nativeQuery = true)
+    Optional<MerchantVolumeLimits> lockMerchantForPaymentCreation(UUID merchantId);
+
+    /**
+     * Limites próprios do comerciante (V15), lidos na MESMA consulta que tranca a linha. Null = vale o global.
+     * Projeção por interface: o módulo payment não importa a entidade Merchant.
+     */
+    interface MerchantVolumeLimits {
+        Long getDaily();
+
+        Long getMonthly();
+    }
+
+    /** Leitura sem trava (para mostrar os limites ao comerciante). */
+    @Query(value = "SELECT daily_volume_limit AS daily, monthly_volume_limit AS monthly FROM merchants WHERE id = :merchantId",
             nativeQuery = true)
-    Optional<String> lockMerchantForPaymentCreation(UUID merchantId);
+    Optional<MerchantVolumeLimits> findMerchantVolumeLimits(UUID merchantId);
 
     /**
      * Soma (centavos) dos pagamentos do comerciante criados a partir de {@code since} e não cancelados.

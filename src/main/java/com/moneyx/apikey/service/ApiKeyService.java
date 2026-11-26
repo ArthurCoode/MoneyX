@@ -1,5 +1,7 @@
 package com.moneyx.apikey.service;
 
+import com.moneyx.apikey.exception.EmailNotVerifiedException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.moneyx.apikey.domain.ApiKey;
@@ -53,6 +55,19 @@ public class ApiKeyService {
      */
     @Transactional
     public IssuedApiKey issueFor(UUID merchantId) {
+        return issueFor(merchantId, false);
+    }
+
+    /**
+     * Emite uma chave de teste (mx_test_) ou de produção (mx_live_).
+     *
+     * @throws EmailNotVerifiedException chave live para comerciante sem e-mail verificado (403)
+     */
+    @Transactional
+    public IssuedApiKey issueFor(UUID merchantId, boolean live) {
+        if (live && !repository.isMerchantEmailVerified(merchantId).orElse(false)) {
+            throw new EmailNotVerifiedException();
+        }
         repository.lockActiveByMerchantId(merchantId);
 
         // A contagem é uma NOVA consulta, executada depois de obter o lock: no PostgreSQL
@@ -61,7 +76,7 @@ public class ApiKeyService {
             throw new ApiKeyLimitExceededException(MAX_ACTIVE_KEYS_PER_MERCHANT);
         }
 
-        GeneratedApiKey generated = ApiKeyGenerator.generate();
+        GeneratedApiKey generated = ApiKeyGenerator.generate(live);
         ApiKey apiKey = repository.save(ApiKey.issue(merchantId, generated));
         log.info("api_key.created merchant={} apiKey={} prefix={}", merchantId, apiKey.getId(), apiKey.getKeyPrefix());
         return new IssuedApiKey(apiKey, generated.plainText());

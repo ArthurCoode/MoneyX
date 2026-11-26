@@ -56,7 +56,7 @@ class ApiKeyControllerTest {
     void createReturns201WithSecretAndNoStore() throws Exception {
         GeneratedApiKey generated = ApiKeyGenerator.generate();
         IssuedApiKey issued = new IssuedApiKey(ApiKey.issue(merchantId, generated), generated.plainText());
-        when(service.issueFor(merchantId)).thenReturn(issued);
+        when(service.issueFor(merchantId, false)).thenReturn(issued);
 
         mockMvc.perform(post("/v1/api-keys").with(activeMerchant(merchantId)))
                 .andExpect(status().isCreated())
@@ -64,12 +64,44 @@ class ApiKeyControllerTest {
                 .andExpect(jsonPath("$.id").value(issued.apiKey().getId().toString()))
                 .andExpect(jsonPath("$.key").value(generated.plainText()))
                 .andExpect(jsonPath("$.prefix").value(generated.displayPrefix()))
+                .andExpect(jsonPath("$.mode").value("test"))
                 .andExpect(jsonPath("$.keyHash").doesNotExist());
     }
 
     @Test
+    void createWithLiveModeIssuesALiveKey() throws Exception {
+        GeneratedApiKey generated = ApiKeyGenerator.generate(true);
+        IssuedApiKey issued = new IssuedApiKey(ApiKey.issue(merchantId, generated), generated.plainText());
+        when(service.issueFor(merchantId, true)).thenReturn(issued);
+
+        mockMvc.perform(post("/v1/api-keys").with(activeMerchant(merchantId))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"live\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.key").value(org.hamcrest.Matchers.startsWith("mx_live_")))
+                .andExpect(jsonPath("$.mode").value("live"));
+    }
+
+    @Test
+    void createWithAnUnknownModeIsRejected() throws Exception {
+        mockMvc.perform(post("/v1/api-keys").with(activeMerchant(merchantId))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"prod\"}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
+    @Test
+    void createLiveWithoutAVerifiedEmailReturns403() throws Exception {
+        when(service.issueFor(merchantId, true)).thenThrow(new com.moneyx.apikey.exception.EmailNotVerifiedException());
+
+        mockMvc.perform(post("/v1/api-keys").with(activeMerchant(merchantId))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"mode\":\"live\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("email_not_verified"));
+    }
+
+    @Test
     void createReturns409WithCodeWhenLimitIsReached() throws Exception {
-        when(service.issueFor(merchantId)).thenThrow(new ApiKeyLimitExceededException(5));
+        when(service.issueFor(merchantId, false)).thenThrow(new ApiKeyLimitExceededException(5));
 
         mockMvc.perform(post("/v1/api-keys").with(activeMerchant(merchantId)))
                 .andExpect(status().isConflict())

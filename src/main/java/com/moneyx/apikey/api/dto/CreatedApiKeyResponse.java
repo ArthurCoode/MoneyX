@@ -13,6 +13,8 @@ public record CreatedApiKeyResponse(
         UUID id,
         String key,
         String prefix,
+        /** "test" (mx_test_) ou "live" (mx_live_). */
+        String mode,
         Instant createdAt
 ) {
 
@@ -21,6 +23,7 @@ public record CreatedApiKeyResponse(
                 issued.apiKey().getId(),
                 issued.plainText(),
                 issued.apiKey().getKeyPrefix(),
+                issued.apiKey().isLive() ? "live" : "test",
                 issued.apiKey().getCreatedAt()
         );
     }

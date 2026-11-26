@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Só serve para UMA instância da aplicação. Com várias, cada uma teria o seu contador (o limite real se multiplicaria):
  * nesse cenário, mover o estado para um armazenamento compartilhado (ex.: Redis).
  */
-public class TokenBucketRateLimiter {
+public class TokenBucketRateLimiter implements RateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(TokenBucketRateLimiter.class);
 
@@ -51,10 +51,6 @@ public class TokenBucketRateLimiter {
     private record Bucket(long creditNanos, Instant updatedAt) {
     }
 
-    /** Resultado de uma tentativa. retryAfter só é significativo quando allowed == false. */
-    public record Decision(boolean allowed, Duration retryAfter) {
-    }
-
     public TokenBucketRateLimiter(int capacity, Duration refillPeriod, int maxKeys, Clock clock) {
         if (capacity < 1) {
             throw new IllegalArgumentException("capacity must be at least 1");
@@ -74,6 +70,7 @@ public class TokenBucketRateLimiter {
         this.maxCreditNanos = Math.multiplyExact(tokenNanos, capacity);
     }
 
+    @Override
     public Decision tryAcquire(String key) {
         Objects.requireNonNull(key, "key must not be null");
         Instant now = clock.instant();
