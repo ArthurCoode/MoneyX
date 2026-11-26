@@ -682,7 +682,10 @@ e só precisam de `POSTGRES_PASSWORD`.
 
 | Variável | Uso |
 |---|---|
-| `MONEYX_TRUSTED_PROXIES` | regex dos IPs de proxy confiáveis (X-Forwarded-For/Proto); vazio = nenhum |
+| `MONEYX_TRUSTED_PROXIES` | regex dos IPs de proxy confiáveis (X-Forwarded-For/Proto); vazio = nenhum. No Compose o padrão é o IP fixo do frontend (`172\.30\.0\.10`) |
+| `MONEYX_API_URL` (frontend) | endereço da API que o SERVIDOR do Next usa (padrão `http://localhost:8080`; no Compose `http://app:8080`) |
+| `MONEYX_PUBLIC_API_URL` (frontend) | endereço da API que o NAVEGADOR vê (link da documentação na landing) |
+| `MONEYX_TRUST_FORWARDED_FOR` (frontend) | `false` (padrão): o guarda sobrescreve o X-Forwarded-For com o IP da conexão; `true` só com proxy confiável na frente do frontend |
 | `MONEYX_RATE_LIMIT_STORE` | `memory` (padrão) ou `redis`; com `MONEYX_REDIS_HOST`/`MONEYX_REDIS_PORT` |
 | `MONEYX_MAIL_ENABLED` / `MONEYX_MAIL_HOST` / `MONEYX_MAIL_PORT` / `MONEYX_MAIL_FROM` | SMTP do e-mail de verificação (padrão `localhost:1025` = Mailpit publicado pelo Compose) |
 | `MONEYX_PUBLIC_BASE_URL` | endereço público da API no link do e-mail (padrão `http://localhost:8080`) |
@@ -1281,7 +1284,7 @@ Pendências e próximos itens da Fase 7 (evolução):
 - [x] Migrar para Java 25 LTS (pom, CI, Dockerfile; 2026-11-25).
 - [ ] Desenvolver dashboard.
 
-### Fase 8 — Frontend (iniciada em 2026-11-26)
+### Fase 8 — Frontend (iniciada em 2026-11-26, concluída em 2026-11-27)
 
 Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
 
@@ -1296,7 +1299,7 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
   regra de negócio duplicada no frontend.
 - **Segurança:** API Keys (`mx_test_`/`mx_live_`) são segredos de servidor e **nunca** vão para o navegador. O
   dashboard usa o servidor do Next.js como **BFF** (cookie de sessão `HttpOnly`; as chamadas à API Java saem do
-  servidor). Login do comerciante: a decidir (hoje só existe API Key).
+  servidor). Login do comerciante: e-mail + senha com sessão `mx_sess_` (8b/8d).
 - **Paleta "Midnight Emerald"** (escura primeiro; modo claro do dashboard depois). Sempre via tokens CSS
   (`--color-*`), nunca cores soltas nos componentes:
 
@@ -1364,7 +1367,23 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
   - Erros de conta no `AccountExceptionHandler` (restrito aos 3 controllers de conta). DTOs com senha/token sobrescrevem
     `toString`. `ObservabilityIntegrationTest` agora também prova que a senha nunca vai para o log.
   - Testes: `DashboardLoginIntegrationTest` (20, banco + filtro reais), `MerchantSessionTest` (unidade).
-- [ ] **8c** Landing page com 3D (R3F) e animações de rolagem (GSAP), respeitando `prefers-reduced-motion`.
+- [x] **8c** (2026-11-27) Landing page (`src/app/page.tsx`, `src/components/landing/`).
+  - Herói com cena 3D própria (`HeroScene`, React Three Fiber): três anéis orbitando um núcleo + espiral de 900
+    partículas nas cores da paleta (cores repetidas em JS: o WebGL não lê variáveis CSS; fonte da verdade continua
+    `tokens.css`). Gerador determinístico (sem `Math.random`). `HeroVisual` carrega o three.js por `next/dynamic`
+    (`ssr:false`) SÓ quando vai mostrar: com `prefers-reduced-motion` ou sem WebGL fica o fundo estático (nem baixa o
+    three.js); fora da tela, `frameloop="never"` (IntersectionObserver). Cena decorativa: `aria-hidden`.
+  - Seções: como funciona (3 passos), exemplo `curl` com o endereço REAL da API (`MONEYX_PUBLIC_API_URL`), 6 recursos,
+    chamada final; "pular para o conteúdo"; com sessão, os botões viram "Ir para o painel". Sem números, clientes ou
+    depoimentos inventados.
+  - Animação: entrada do título em CSS (funciona sem JS; a regra global de reduced-motion zera). Revelação na rolagem
+    com GSAP `ScrollTrigger.batch` + `gsap.from` (o HTML nasce VISÍVEL; só o JS esconde/anima; `context.revert()` ao
+    sair). **Motion não foi usado:** ele renderiza o estado inicial (`opacity:0`) no HTML do servidor e o título sumiria
+    sem JS. A dependência `motion` continua no package.json, sem uso (candidata a remoção).
+  - E2E (`e2e/landing.spec.ts`): 3D com WebGL sem erro de console/CSP; com reduced motion nenhum canvas, nenhum
+    download do three.js e nada animando ao rolar; revelação ao rolar; CTAs; 390 px sem rolagem lateral.
+    Mutações: 3D ignorando reduced motion, GSAP ignorando reduced motion, 3D sem `aria-hidden` (todas mortas; a do GSAP
+    sobreviveu à 1ª versão do teste, que não rolava a página).
 - [x] **8d** (2026-11-27) BFF no Next.js + telas de conta. Decisões do desenvolvedor: o próprio token `mx_sess_` num
   cookie `__Host-mx_session` (HttpOnly, Secure, SameSite=Lax, Path=/, expira com o limite absoluto da sessão); CSRF =
   SameSite=Lax + checagem de Origin; rotas em português.
@@ -1387,8 +1406,8 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
     nem `\` (`safeRedirectPath`, contra open redirect).
   - **IP do visitante:** o Next só PREENCHE `X-Forwarded-For` se ele não veio (`??=` no base-server) → o BFF repassa o
     ÚLTIMO item, e só se tiver cara de IP. A API só acredita nele com o IP do Next em `MONEYX_TRUSTED_PROXIES` (8f).
-    **Risco residual:** com o Next exposto direto, o visitante escolhe o "IP" (o limite por e-mail continua valendo);
-    em produção o Next fica atrás de um proxy que sobrescreve o header. Sem confiar no Next, todos os visitantes dividem
+    ~~Risco residual: com o Next exposto direto, o visitante escolhe o "IP".~~ **Resolvido na 8f** pelo guarda do
+    X-Forwarded-For na imagem Docker (no `npm run dev` o guarda não roda: só desenvolvimento). Sem confiar no Next, todos os visitantes dividem
     os baldes por IP (o E2E estoura o limite de cadastro 5/IP: limpar `moneyx:ratelimit:*` no Redis de dev).
   - **Erros:** `src/lib/forms/problem.ts` traduz pelo `code` estável e por campo (`errors[].field`); o `detail` em inglês
     da API nunca aparece. 429 → minutos do Retry-After arredondados para cima. Senha nunca volta preenchida.
@@ -1401,9 +1420,57 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
     (`<img onerror>`) bloqueado pela CSP. Script criado por JS confiável é PERMITIDO pelo `strict-dynamic` (de propósito):
     não serve como teste de XSS. O role="alert" vazio do Next (anunciador de rota) exige filtrar pelo texto "Erro:".
     Mutações: 10 unitárias + 2 E2E (cookie sem HttpOnly; sair sem DELETE na API), todas mortas, controle verde.
-- [ ] **8e** Dashboard: pagamentos (lista/detalhe/cancelar), API Keys, webhooks e eventos.
-- [ ] **8f** Imagem Docker do frontend + Compose + testes ponta a ponta (Playwright).
-- Pendência visual: trocar os ícones de texto do `StatusBadge` por SVG (o ⌛ aparece como emoji colorido).
+- [x] **8e** (2026-11-27) Dashboard: navegação lateral (no celular vira faixa horizontal), `aria-current` na página atual.
+  - **Telas:** `/painel` (conta, aviso de e-mail não confirmado com reenvio, limites de volume, 5 pagamentos recentes);
+    `/painel/pagamentos` (filtro por status + paginação por cursor `?depois=<último id>`, como a API/Stripe);
+    `/painel/pagamentos/nova`; `/painel/pagamentos/[id]` (Pix copia e cola + copiar, simular pagamento, cancelar com
+    confirmação); `/painel/api-keys` (criar test/live, segredo UMA vez, revogar); `/painel/webhooks` e `/[id]`
+    (criar com segredo `whsec_` UMA vez, entregas com reenvio das que falharam, reativar, excluir, linha do tempo com
+    autor "pelo painel/pela API/pelo sistema"); `/painel/eventos` e `/[id]` (filtro por tipo, JSON em `<pre>`).
+    `error.tsx` (sem detalhe técnico, só o `digest`) e `not-found.tsx` do painel.
+  - **Servidor:** `src/lib/server/session-api.ts`: `sessionApi()` + `guardResponse` + `requireData` (leituras).
+    **401 → /entrar; 403 SEM `code` → /entrar (segurança barrou a conta); 403 COM `code` é regra de negócio**
+    (`email_not_verified`, `sandbox_requires_test_key`) e aparece na tela. Bug achado pelo E2E: tratar todo 403 como
+    sessão morta jogava o comerciante no login ao pedir chave `mx_live_`. 404 e 400 (id malformado) → "não encontrado"
+    (id de outro comerciante também é 404 na API: não revela que existe). Mutações em `src/app/actions/dashboard.ts`
+    com `revalidatePath`.
+  - **Idempotência da cobrança:** a `Idempotency-Key` é gerada quando a página "nova" é montada e é a MESMA em todo
+    reenvio daquele formulário. NUNCA gerar chave nova depois de erro: com o PSP fora (503) o pagamento já existe em
+    CREATING e repetir a MESMA chave retoma a criação; chave nova criaria uma 2ª cobrança. (A 1ª versão da IA girava a
+    chave após erro; a mutação "sobreviveu", o que levou a reler a regra do backend e achar o problema.) E2E: a resposta
+    é derrubada na rede depois que o servidor criou a cobrança (`route.fetch()` + `abort`), o comerciante tenta de novo
+    → existe UMA cobrança.
+  - **Dinheiro na tela:** `src/lib/format.ts`: `parseReaisToCents` converte TEXTO em centavos sem float ("1.234,56" →
+    123456; milhar com ponto, decimal com vírgula; recusa "1e3", "12.5", dígitos não ASCII); `formatCents`;
+    `formatDateTime` sempre em `America/Sao_Paulo`. Rótulos dos eventos em `src/lib/webhook-events.ts` com `satisfies
+    Record<EventType,...>` (tipo novo no contrato sem rótulo = erro de compilação).
+  - Mensagens por `code` para todos os códigos de negócio da API (`src/lib/forms/problem.ts`); o 409 genérico pede para
+    recarregar (o "já existe uma conta" ficou só no cadastro).
+  - `StatusBadge` com ícones SVG (pendência da 8a resolvida). Sem `style` inline em lugar nenhum (só classes).
+    `.tableWrap` com `position: relative`: o `.visually-hidden` (absolute) escapava da caixa com rolagem e alargava a
+    página no celular (achado medindo `scrollWidth` de todas as páginas a 390 px).
+  - **Testes:** Vitest 66. Playwright 8 (o painel usa UM comerciante em modo serial: o cadastro tem limite 5/IP).
+    Mutações: 3 unitárias (milhar, centavos de 1 dígito, fuso) + 4 E2E (403 de negócio, chave nova a cada envio, id
+    malformado, sem revalidar), todas mortas, controle verde.
+- [x] **8f** (2026-11-27) Imagem Docker do frontend + Compose + E2E no CI. **FASE 8 CONCLUÍDA.**
+  - `frontend/Dockerfile`: deps (`npm ci`) → build (`output: standalone`) → runtime `node:26-alpine` por digest,
+    usuário 10001, sem npm/npx/corepack (o Trivy acusava 6 HIGH em `brace-expansion`/`undici` DENTRO do npm da imagem
+    base, não no nosso código), HEALTHCHECK em `/entrar`. Dependabot docker para `/frontend` (Node maior ignorado).
+  - **Guarda do X-Forwarded-For** (`frontend/server/forwarded-for-guard.cjs`, carregado com `node -r` antes do
+    `server.js`): sobrescreve o header com o IP do socket em TODA requisição (o Next só preenchia se faltasse → forjável).
+    Fecha o risco residual da 8d. `MONEYX_TRUST_FORWARDED_FOR=true` só com proxy confiável na frente.
+  - Compose: serviço `frontend` (127.0.0.1:3000, `read_only`, tmpfs `/tmp` e `/app/.next/cache`, `cap_drop: ALL`,
+    `no-new-privileges`), rede `172.30.0.0/24` com o frontend em `172.30.0.10`, e a API confiando SÓ nesse IP por
+    padrão. Provado por HTTP real: login com `X-Forwarded-For: 6.6.6.6` → balde `login-ip:172.30.0.1` (IP real); controle
+    com `MONEYX_TRUST_FORWARDED_FOR=true` → `login-ip:6.6.6.6`.
+  - CI `.github/workflows/e2e.yml`: `.env` com segredos descartáveis (`openssl rand`), `docker compose up --build
+    --wait`, Trivy bloqueante na imagem do frontend, Playwright (Chromium), traces e logs dos containers se falhar,
+    `compose down --volumes` sempre.
+  - Rodar local: `docker compose up -d --build` → http://localhost:3000; `cd frontend; npm run e2e`. Repetir o E2E
+    em menos de ~10 min estoura o limite de cadastro (5/IP): limpar os baldes
+    (`docker exec moneyx-redis sh -c "redis-cli --scan --pattern 'moneyx:ratelimit:*' | xargs -r redis-cli del"`).
+  - Testes: Vitest 69 (guarda testado com servidor HTTP real), Playwright 12 contra o Compose (2 rodadas). Mutações do
+    guarda: "só preenche se faltar" e "desligado por padrão", mortas.
 
 ## 12. Diretrizes de Git
 
