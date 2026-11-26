@@ -1,6 +1,7 @@
 package com.moneyx.payment.service;
 
 import com.moneyx.payment.domain.Payment;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -18,8 +19,12 @@ import java.util.UUID;
  */
 public record PaymentView(
         UUID id,
+        // Lista explícita no contrato: os clientes (ex.: os tipos TypeScript do frontend) sabem todos os valores.
+        // PaymentViewContractTest garante que ela é igual ao enum PaymentStatus.
+        @Schema(allowableValues = {"CREATING", "PENDING", "PAID", "CANCELED", "EXPIRED"})
         String status,
         long amount,
+        @Schema(allowableValues = {"BRL"})
         String currency,
         String description,
         String externalReference,
