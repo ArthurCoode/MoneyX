@@ -1,0 +1,11 @@
+# Só o necessário para o build entra no contexto do Docker (mais rápido e sem vazar arquivos locais).
+node_modules
+.next
+out
+coverage
+test-results
+playwright-report
+*.tsbuildinfo
+.env*
+Dockerfile
+.dockerignore
