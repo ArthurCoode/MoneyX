@@ -43,3 +43,4 @@ secrets/
 *.p12
 *.pfx
 *.pem
+.cursor/skills/moneyx/SKILL.md
