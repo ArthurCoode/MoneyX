@@ -35,11 +35,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Instalar Java 21 (Temurin) com cache do Maven
+      - name: Instalar Java 25 (Temurin) com cache do Maven
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
 
       - name: Compilar e rodar os testes
@@ -70,22 +70,28 @@ jobs:
         run: docker build --tag moneyx-app:ci .
 
       # Trivy pela imagem oficial, fixada por digest (uma action de terceiros a menos). Procura vulnerabilidades
-      # conhecidas HIGH/CRITICAL no sistema (Alpine) e nas bibliotecas Java. Por enquanto SÓ AVISA: o resultado vai
-      # para o resumo da execução e não reprova o build (--exit-code 0); continue-on-error cobre falhas do próprio
-      # Trivy (ex.: indisponibilidade ao baixar a base de vulnerabilidades), que não são problema do nosso código.
-      - name: Varredura de vulnerabilidades (Trivy, só aviso)
-        continue-on-error: true
+      # conhecidas HIGH/CRITICAL no sistema (Alpine) e nas bibliotecas Java.
+      # BLOQUEANTE desde 2026-11-25: vulnerabilidade HIGH/CRITICAL COM CORREÇÃO disponível (--ignore-unfixed) reprova o
+      # build (código de saída 3). Falha do PRÓPRIO Trivy (ex.: não conseguiu baixar a base de vulnerabilidades) só
+      # avisa: não é problema do nosso código e não deve travar o merge.
+      # Atualizar a imagem do Trivy À MÃO (o Dependabot não vê imagens usadas em "docker run"): tag + digest do Docker Hub.
+      - name: Varredura de vulnerabilidades (Trivy, bloqueante)
         run: |
+          set +e
           docker run --rm \
             --volume /var/run/docker.sock:/var/run/docker.sock \
             --volume "$RUNNER_TEMP:/out" \
             aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
-            image --scanners vuln --severity HIGH,CRITICAL --exit-code 0 \
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 3 \
             --format table --table-mode detailed --output /out/trivy.txt moneyx-app:ci
+          status=$?
+          set -e
           # "detailed" lista só o que foi encontrado: arquivo vazio = nenhuma vulnerabilidade HIGH/CRITICAL.
           {
-            echo "## Trivy: vulnerabilidades HIGH/CRITICAL na imagem"
-            if [ -s "$RUNNER_TEMP/trivy.txt" ]; then
+            echo "## Trivy: vulnerabilidades HIGH/CRITICAL (com correção) na imagem"
+            if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+              echo "O Trivy falhou (código $status): varredura não concluída, o build NÃO foi reprovado por isso."
+            elif [ -s "$RUNNER_TEMP/trivy.txt" ]; then
               echo '```'
               cat "$RUNNER_TEMP/trivy.txt"
               echo '```'
@@ -93,3 +99,7 @@ jobs:
               echo "Nenhuma encontrada."
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -eq 3 ]; then
+            echo "::error::Vulnerabilidade HIGH/CRITICAL com correção disponível na imagem (detalhes no resumo)."
+            exit 1
+          fi

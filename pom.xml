@@ -27,7 +27,7 @@
 		<url/>
 	</scm>
 	<properties>
-		<java.version>21</java.version>
+		<java.version>25</java.version>
 		<!-- Não gerenciado pelo Spring Boot. 3.2.0 foi construído sobre o Spring Boot 4.1.2 (a mesma versão deste projeto). -->
 		<springdoc.version>3.2.0</springdoc.version>
 	</properties>
@@ -47,6 +47,16 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<!-- Rate limit compartilhado entre instâncias (moneyx.rate-limit.store=redis). Autorizado em 2026-11-25. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+		<!-- E-mail de verificação do comerciante (SMTP; em dev, o Mailpit do Compose). Autorizado em 2026-11-25. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.flywaydb</groupId>
