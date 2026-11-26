@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "@/styles/globals.css";
 
@@ -12,7 +13,10 @@ export const metadata: Metadata = {
   description: "Infraestrutura de pagamentos Pix: API, webhooks assinados e conciliação automática.",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // CSP com nonce (proxy.ts) exige renderizar cada página NA HORA: uma página pré-gerada no build não teria o nonce
+  // desta requisição e o navegador bloquearia os scripts. Ler os headers deixa todas as rotas dinâmicas.
+  await headers();
   return (
     <html lang="pt-BR" className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
       <body>{children}</body>
