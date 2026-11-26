@@ -12,6 +12,9 @@ target/
 *.iml
 .vscode/
 
+# Frontend: tem a sua própria imagem (frontend/); a do backend nunca leva node_modules nem o código do site
+frontend/
+
 # Git, CI e documentação interna
 .git/
 .github/

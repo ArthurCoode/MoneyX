@@ -1,0 +1,74 @@
+# CI do FRONTEND (frontend/, Next.js). Só roda quando algo do frontend muda, ou quando o contrato OpenAPI do backend
+# muda (o frontend gera os tipos dele a partir desse contrato).
+#
+# Mesmas regras do ci.yml: actions fixadas pelo hash do commit, permissão mínima, execuções antigas canceladas.
+name: Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "src/test/resources/openapi/moneyx-api.json"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "src/test/resources/openapi/moneyx-api.json"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  check:
+    name: Lint, tipos, testes e build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Instalar Node 26 com cache do npm
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm ci: instala EXATAMENTE o package-lock (falha se ele não bater com o package.json).
+      - name: Instalar dependências
+        run: npm ci --no-fund
+
+      # A fronteira com o backend: os tipos versionados precisam ser os gerados do contrato atual. Se a API mudou e
+      # ninguém regenerou (npm run api:types), o CI falha aqui, antes de qualquer tela usar um campo que não existe.
+      - name: Tipos da API em dia com o contrato OpenAPI
+        run: |
+          npm run -s api:types
+          git diff --exit-code -- src/lib/api/schema.d.ts
+
+      - name: Lint (sem avisos)
+        run: npm run -s lint -- --max-warnings=0
+
+      - name: Checagem de tipos
+        run: npm run -s typecheck
+
+      - name: Testes
+        run: npm run -s test
+
+      - name: Build
+        run: npm run -s build
+
+      - name: Auditoria das dependências de produção
+        run: npm audit --omit=dev --audit-level=high
