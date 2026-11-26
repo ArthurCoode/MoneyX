@@ -12,7 +12,17 @@ name: CI
 on:
   push:
     branches: [main]
+    # Mudança só no frontend (ou só na documentação interna) não precisa rodar os testes do backend: o frontend tem o
+    # seu próprio workflow (frontend.yml).
+    paths-ignore:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+      - ".cursor/**"
   pull_request:
+    paths-ignore:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+      - ".cursor/**"
 
 # Permissão mínima: o workflow só precisa LER o código.
 permissions:
