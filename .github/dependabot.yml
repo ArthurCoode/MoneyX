@@ -48,6 +48,25 @@ updates:
     commit-message:
       prefix: build
 
+  # Imagem base do frontend (frontend/Dockerfile, node:26-alpine por digest). Node MAIOR é decisão do projeto (LTS).
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+    groups:
+      frontend-docker-base-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

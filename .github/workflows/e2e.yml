@@ -1,0 +1,126 @@
+# Testes PONTA A PONTA: navegador de verdade (Playwright) → frontend (Next.js, imagem Docker) → API Java (imagem
+# Docker) → PostgreSQL, Redis e Mailpit, tudo pelo compose.yaml, exatamente como na máquina do desenvolvedor.
+#
+# Também varre a imagem do FRONTEND com o Trivy (a do backend já é varrida no ci.yml).
+# Mesmas regras dos outros workflows: actions fixadas pelo hash do commit, permissão mínima, execuções antigas canceladas.
+name: E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "src/main/**"
+      - "pom.xml"
+      - "Dockerfile"
+      - "compose.yaml"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "src/main/**"
+      - "pom.xml"
+      - "Dockerfile"
+      - "compose.yaml"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright contra o ambiente completo (Compose)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Segredos DESCARTÁVEIS, gerados a cada execução (o banco nasce vazio e some no fim do job). Nada vem do repositório.
+      - name: Criar o .env do Compose
+        run: |
+          password="$(openssl rand -hex 24)"
+          key="$(openssl rand -base64 32)"
+          echo "::add-mask::$password"
+          echo "::add-mask::$key"
+          {
+            echo "POSTGRES_DB=moneyx"
+            echo "POSTGRES_USER=moneyx"
+            echo "POSTGRES_PASSWORD=$password"
+            echo "MONEYX_WEBHOOK_ENCRYPTION_KEY=$key"
+          } > .env
+
+      - name: Subir o ambiente (constrói as imagens da API e do frontend)
+        run: docker compose up -d --build --wait --wait-timeout 300
+
+      # Mesmo critério do ci.yml para a imagem do backend: HIGH/CRITICAL COM correção reprova; falha do Trivy só avisa.
+      # Atualizar a imagem do Trivy À MÃO junto com a do ci.yml (o Dependabot não vê "docker run").
+      - name: Varredura de vulnerabilidades da imagem do frontend (Trivy, bloqueante)
+        run: |
+          set +e
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$RUNNER_TEMP:/out" \
+            aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 3 \
+            --format table --table-mode detailed --output /out/trivy-frontend.txt moneyx-frontend:local
+          status=$?
+          set -e
+          {
+            echo "## Trivy: vulnerabilidades HIGH/CRITICAL (com correção) na imagem do frontend"
+            if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+              echo "O Trivy falhou (código $status): varredura não concluída, o build NÃO foi reprovado por isso."
+            elif [ -s "$RUNNER_TEMP/trivy-frontend.txt" ]; then
+              echo '```'
+              cat "$RUNNER_TEMP/trivy-frontend.txt"
+              echo '```'
+            else
+              echo "Nenhuma encontrada."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -eq 3 ]; then
+            echo "::error::Vulnerabilidade HIGH/CRITICAL com correção disponível na imagem do frontend."
+            exit 1
+          fi
+
+      - name: Instalar Node 26 com cache do npm
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependências e o Chromium do Playwright
+        working-directory: frontend
+        run: |
+          npm ci --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Testes ponta a ponta
+        working-directory: frontend
+        run: npm run e2e
+
+      - name: Logs dos containers (se falhou)
+        if: failure()
+        run: docker compose logs --no-color --tail 300
+
+      # Traces do Playwright (passo a passo de cada teste que falhou, com prints e rede): abrir com
+      # "npx playwright show-trace <arquivo>.zip".
+      - name: Guardar os traces (se falhou)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          retention-days: 7
+
+      - name: Derrubar o ambiente
+        if: always()
+        run: docker compose down --volumes
