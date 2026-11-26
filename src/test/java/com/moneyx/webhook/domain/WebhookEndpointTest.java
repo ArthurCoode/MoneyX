@@ -83,11 +83,11 @@ class WebhookEndpointTest {
     void historyRequiresAKeyForMerchantActionsAndNoneForSystemActions() {
         UUID key = UUID.randomUUID();
 
-        assertThat(WebhookEndpointHistory.of(endpoint, WebhookEndpointAction.DISABLED, null, "{}", NOW).getApiKeyId()).isNull();
+        assertThat(WebhookEndpointHistory.of(endpoint, WebhookEndpointAction.DISABLED, (UUID) null, "{}", NOW).getApiKeyId()).isNull();
         assertThat(WebhookEndpointHistory.of(endpoint, WebhookEndpointAction.ENABLED, key, "{}", NOW).getApiKeyId()).isEqualTo(key);
         assertThatThrownBy(() -> WebhookEndpointHistory.of(endpoint, WebhookEndpointAction.DISABLED, key, "{}", NOW))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> WebhookEndpointHistory.of(endpoint, WebhookEndpointAction.CREATED, null, "{}", NOW))
+        assertThatThrownBy(() -> WebhookEndpointHistory.of(endpoint, WebhookEndpointAction.CREATED, (UUID) null, "{}", NOW))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

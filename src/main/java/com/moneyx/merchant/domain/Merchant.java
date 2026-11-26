@@ -47,6 +47,13 @@ public class Merchant {
     private Instant updatedAt;
 
     /** Controle de concorrência otimista: evita que duas atualizações simultâneas se sobrescrevam. */
+    /**
+     * Hash Argon2id da senha do dashboard (formato do Spring Security, "{argon2}..."). Null = sem senha ainda.
+     * Nunca a senha em texto; nunca exposto pela API.
+     */
+    @Column(name = "password_hash", length = 255)
+    private String passwordHash;
+
     /** Quando o e-mail foi confirmado (link com token). Null = não verificado: não pode criar chaves mx_live_. */
     @Column(name = "email_verified_at")
     private Instant emailVerifiedAt;
@@ -87,6 +94,20 @@ public class Merchant {
             throw new IllegalStateException("Merchant is already CLOSED.");
         }
         changeStatus(MerchantStatus.CLOSED);
+    }
+
+    /** Troca o hash da senha (cadastro, definição ou redefinição). Quem chama já aplicou PasswordPolicy e o encoder. */
+    public void changePasswordHash(String newHash, Instant now) {
+        this.passwordHash = Objects.requireNonNull(newHash, "newHash must not be null");
+        this.updatedAt = now;
+    }
+
+    public boolean hasPassword() {
+        return passwordHash != null;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
     }
 
     /** Confirma o e-mail. Idempotente: uma segunda confirmação mantém o instante da primeira. */

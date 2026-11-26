@@ -78,7 +78,7 @@ class MerchantControllerTest {
         Merchant merchant = new Merchant("Loja LTDA", "12345678000190", "contato@loja.com");
         GeneratedApiKey generated = ApiKeyGenerator.generate();
         IssuedApiKey issued = new IssuedApiKey(ApiKey.issue(merchant.getId(), generated), generated.plainText());
-        when(service.register("Loja LTDA", "12.345.678/0001-90", "contato@loja.com"))
+        when(service.register("Loja LTDA", "12.345.678/0001-90", "contato@loja.com", "senha-forte-123"))
                 .thenReturn(new MerchantRegistration(merchant, issued));
 
         mockMvc.perform(post("/v1/merchants")
@@ -87,7 +87,8 @@ class MerchantControllerTest {
                                 {
                                   "legalName": "Loja LTDA",
                                   "document": "12.345.678/0001-90",
-                                  "email": "contato@loja.com"
+                                  "email": "contato@loja.com",
+                                  "password": "senha-forte-123"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -111,7 +112,8 @@ class MerchantControllerTest {
                                 {
                                   "legalName": "",
                                   "document": "123",
-                                  "email": "not-an-email"
+                                  "email": "not-an-email",
+                                  "password": "senha-forte-123"
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -121,7 +123,26 @@ class MerchantControllerTest {
                 .andExpect(jsonPath("$.errors[*].field",
                         containsInAnyOrder("legalName", "document", "email")));
 
-        verify(service, never()).register(any(), any(), any());
+        verify(service, never()).register(any(), any(), any(), any());
+    }
+
+    @Test
+    void signupRequiresAPasswordOfAtLeast12Characters() throws Exception {
+        mockMvc.perform(post("/v1/merchants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"legalName": "Loja LTDA", "document": "12345678901", "email": "a@b.com", "password": "curta"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("password"));
+        mockMvc.perform(post("/v1/merchants")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"legalName": "Loja LTDA", "document": "12345678901", "email": "a@b.com"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("password"));
+        verify(service, never()).register(any(), any(), any(), any());
     }
 
     @Test
@@ -133,7 +154,8 @@ class MerchantControllerTest {
                                 {
                                   "legalName": "",
                                   "document": "12345678901",
-                                  "email": "contato@loja.com"
+                                  "email": "contato@loja.com",
+                                  "password": "senha-forte-123"
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -143,7 +165,7 @@ class MerchantControllerTest {
 
     @Test
     void createReturns409WhenMerchantAlreadyExists() throws Exception {
-        when(service.register(any(), any(), any()))
+        when(service.register(any(), any(), any(), any()))
                 .thenThrow(new DuplicateMerchantException("A merchant with this document already exists"));
 
         mockMvc.perform(post("/v1/merchants")
@@ -152,7 +174,8 @@ class MerchantControllerTest {
                                 {
                                   "legalName": "Loja LTDA",
                                   "document": "12345678000190",
-                                  "email": "contato@loja.com"
+                                  "email": "contato@loja.com",
+                                  "password": "senha-forte-123"
                                 }
                                 """))
                 .andExpect(status().isConflict())
@@ -169,7 +192,7 @@ class MerchantControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
 
-        verify(service, never()).register(any(), any(), any());
+        verify(service, never()).register(any(), any(), any(), any());
     }
 
     @Test

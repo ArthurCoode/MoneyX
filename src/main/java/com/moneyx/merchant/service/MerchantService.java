@@ -1,5 +1,8 @@
 package com.moneyx.merchant.service;
 
+import com.moneyx.merchant.domain.PasswordPolicy;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.moneyx.apikey.service.ApiKeyService;
@@ -34,13 +37,28 @@ public class MerchantService {
     private final MerchantRepository repository;
     private final ApiKeyService apiKeyService;
     private final EmailVerificationService emailVerification;
+    private final PasswordEncoder passwordEncoder;
 
     // Injeção via construtor: dependência explícita, campo final e fácil de testar com mocks.
     public MerchantService(MerchantRepository repository, ApiKeyService apiKeyService,
-                           EmailVerificationService emailVerification) {
+                           EmailVerificationService emailVerification, PasswordEncoder passwordEncoder) {
         this.repository = repository;
         this.apiKeyService = apiKeyService;
         this.emailVerification = emailVerification;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    /**
+     * Cadastro com a senha do dashboard (Etapa 8b). A senha passa pela PasswordPolicy e é guardada só como hash Argon2id.
+     *
+     * @throws IllegalArgumentException senha fora da política (400)
+     */
+    @Transactional
+    public MerchantRegistration register(String legalName, String document, String email, String password) {
+        PasswordPolicy.validate(password, email);
+        // O hash (Argon2, dezenas de ms) é calculado ANTES de qualquer escrita: a transação não segura linhas esperando.
+        String hash = passwordEncoder.encode(password);
+        return registerWithHash(legalName, document, email, hash);
     }
 
     /**
@@ -49,7 +67,16 @@ public class MerchantService {
      */
     @Transactional
     public MerchantRegistration register(String legalName, String document, String email) {
-        Merchant merchant = createMerchant(legalName, document, email);
+        return registerWithHash(legalName, document, email, null);
+    }
+
+    /**
+     * O hash entra no Merchant ANTES do primeiro save. Atribuir depois não funciona: a verificação de e-mail roda um
+     * UPDATE em massa (@Modifying clearAutomatically) que limpa o contexto do JPA e "desanexa" o Merchant, e a
+     * mudança se perderia em silêncio (bug pego pelo DashboardLoginIntegrationTest).
+     */
+    private MerchantRegistration registerWithHash(String legalName, String document, String email, String passwordHash) {
+        Merchant merchant = createMerchant(legalName, document, email, passwordHash);
         IssuedApiKey apiKey = apiKeyService.issueFor(merchant.getId());
         // Link de verificação do e-mail (sai depois do commit). Sem e-mail verificado, só chaves mx_test_.
         emailVerification.requestFor(merchant);
@@ -58,10 +85,13 @@ public class MerchantService {
         return new MerchantRegistration(merchant, apiKey);
     }
 
-    private Merchant createMerchant(String legalName, String document, String email) {
+    private Merchant createMerchant(String legalName, String document, String email, String passwordHash) {
         // A entidade valida e normaliza os dados. Assim a checagem de duplicidade
         // usa o mesmo formato salvo no banco (ex.: "123.456.789-01" -> "12345678901").
         Merchant merchant = new Merchant(legalName, document, email);
+        if (passwordHash != null) {
+            merchant.changePasswordHash(passwordHash, merchant.getCreatedAt());
+        }
 
         if (repository.existsByDocument(merchant.getDocument())) {
             throw new DuplicateMerchantException("A merchant with this document already exists");

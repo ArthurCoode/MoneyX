@@ -97,7 +97,7 @@
             }
           }
         },
-        "description" : "API Key ausente, inválida ou revogada.",
+        "description" : "Credencial ausente, inválida, revogada ou expirada (API Key ou sessão do dashboard); no login, e-mail ou senha errados (`invalid_credentials`).",
         "headers" : {
           "WWW-Authenticate" : {
             "schema" : {
@@ -156,6 +156,22 @@
         },
         "type" : "object"
       },
+      "ConfirmPasswordResetRequest" : {
+        "properties" : {
+          "newPassword" : {
+            "maxLength" : 128,
+            "minLength" : 12,
+            "type" : "string"
+          },
+          "token" : {
+            "maxLength" : 100,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [ "newPassword", "token" ],
+        "type" : "object"
+      },
       "CreateApiKeyRequest" : {
         "properties" : {
           "mode" : {
@@ -184,9 +200,14 @@
             "maxLength" : 150,
             "minLength" : 0,
             "type" : "string"
+          },
+          "password" : {
+            "maxLength" : 128,
+            "minLength" : 12,
+            "type" : "string"
           }
         },
-        "required" : [ "document", "email", "legalName" ],
+        "required" : [ "document", "email", "legalName", "password" ],
         "type" : "object"
       },
       "CreatePaymentRequest" : {
@@ -219,6 +240,22 @@
           }
         },
         "required" : [ "amount", "currency" ],
+        "type" : "object"
+      },
+      "CreateSessionRequest" : {
+        "properties" : {
+          "email" : {
+            "maxLength" : 254,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "password" : {
+            "maxLength" : 128,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [ "email", "password" ],
         "type" : "object"
       },
       "CreateWebhookEndpointRequest" : {
@@ -392,6 +429,17 @@
         },
         "type" : "object"
       },
+      "PasswordResetRequest" : {
+        "properties" : {
+          "email" : {
+            "maxLength" : 254,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        },
+        "required" : [ "email" ],
+        "type" : "object"
+      },
       "PaymentListResponse" : {
         "properties" : {
           "data" : {
@@ -513,6 +561,30 @@
         },
         "type" : "object"
       },
+      "SessionResponse" : {
+        "properties" : {
+          "expiresAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "id" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "idleTimeout" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "merchantId" : {
+            "format" : "uuid",
+            "type" : "string"
+          },
+          "token" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
       "VolumeLimits" : {
         "properties" : {
           "daily" : {
@@ -606,6 +678,10 @@
           },
           "occurredAt" : {
             "format" : "date-time",
+            "type" : "string"
+          },
+          "sessionId" : {
+            "format" : "uuid",
             "type" : "string"
           },
           "snapshot" : {
@@ -968,6 +1044,73 @@
         "tags" : [ "Merchants" ]
       }
     },
+    "/v1/merchants/password-reset" : {
+      "post" : {
+        "description" : "Público. Responde 202 SEMPRE (exista a conta ou não), para não revelar quem tem conta. O link vale 1 h e substitui os anteriores. Muitos pedidos (por IP ou por e-mail) → 429 `rate_limit_exceeded` + `Retry-After`.",
+        "operationId" : "requestPasswordReset",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "202" : {
+            "description" : "Se a conta existir, o e-mail foi enviado."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/TooManyRequests"
+          }
+        },
+        "summary" : "Pedir o link de definir/redefinir senha",
+        "tags" : [ "Merchants" ]
+      }
+    },
+    "/v1/merchants/password-reset/confirm" : {
+      "post" : {
+        "description" : "Público. Troca a senha, encerra TODAS as sessões abertas e confirma o e-mail. Link inválido/usado → 400 `invalid_reset_token`; vencido → 400 `reset_token_expired`.",
+        "operationId" : "confirmPasswordReset",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/ConfirmPasswordResetRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "204" : {
+            "description" : "Senha trocada."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Salvar a nova senha (link do e-mail)",
+        "tags" : [ "Merchants" ]
+      }
+    },
     "/v1/merchants/verify-email" : {
       "get" : {
         "description" : "Público. O token vem no link enviado no cadastro (uso único, 24 h). Repetir o link depois de confirmado responde 200. Link inválido/substituído → 400 `invalid_verification_token`; vencido → 400 `verification_token_expired`.",
@@ -1255,6 +1398,67 @@
         },
         "summary" : "Simular o pagamento do Pix",
         "tags" : [ "Sandbox" ]
+      }
+    },
+    "/v1/sessions" : {
+      "post" : {
+        "description" : "Público. Devolve o token da sessão (`mx_sess_...`) UMA vez (`Cache-Control: no-store`). Vale 6 h sem uso ou 24 h no total. E-mail inexistente e senha errada dão a mesma resposta: 401 `invalid_credentials`. Muitas tentativas (por IP ou por e-mail) → 429 `rate_limit_exceeded` + `Retry-After`.",
+        "operationId" : "createSession",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description" : "Sessão criada."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "429" : {
+            "$ref" : "#/components/responses/TooManyRequests"
+          }
+        },
+        "summary" : "Entrar no dashboard (e-mail + senha)",
+        "tags" : [ "Sessions" ]
+      }
+    },
+    "/v1/sessions/current" : {
+      "delete" : {
+        "description" : "Revoga a sessão usada na requisição. Idempotente. Com uma API Key não há sessão: responde 204 sem efeito.",
+        "operationId" : "deleteCurrentSession",
+        "responses" : {
+          "204" : {
+            "description" : "Sessão encerrada."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Sair (encerrar a sessão atual)",
+        "tags" : [ "Sessions" ]
       }
     },
     "/v1/webhook-deliveries/{id}/retry" : {

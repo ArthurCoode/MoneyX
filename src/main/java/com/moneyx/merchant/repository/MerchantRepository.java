@@ -4,6 +4,7 @@ import com.moneyx.merchant.domain.Merchant;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -17,4 +18,7 @@ public interface MerchantRepository extends JpaRepository<Merchant, UUID> {
     boolean existsByDocument(String document);
 
     boolean existsByEmail(String email);
+
+    /** Login: o e-mail já chega normalizado (minúsculas, sem espaços), igual ao guardado. */
+    Optional<Merchant> findByEmail(String email);
 }

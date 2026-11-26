@@ -1,5 +1,7 @@
 package com.moneyx.webhook.api;
 
+import com.moneyx.webhook.domain.Actor;
+
 import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.event.domain.EventType;
 import com.moneyx.merchant.service.MerchantService;
@@ -80,7 +82,7 @@ class WebhookDeliveryApiControllerTest {
     void enableReturnsTheEndpointWithoutDisabledAt() throws Exception {
         WebhookEndpoint endpoint = WebhookEndpoint.create(endpointId, merchantId, "https://loja.com/hook",
                 List.of(EventType.PAYMENT_PAID), "ciphertext", "whsec_ab12", NOW);
-        when(endpointService.enable(eq(merchantId), any(), eq(endpointId))).thenReturn(endpoint);
+        when(endpointService.enable(eq(merchantId), any(Actor.class), eq(endpointId))).thenReturn(endpoint);
 
         mockMvc.perform(post("/v1/webhook-endpoints/{id}/enable", endpointId).with(activeMerchant(merchantId)))
                 .andExpect(status().isOk())
@@ -91,7 +93,7 @@ class WebhookDeliveryApiControllerTest {
 
     @Test
     void enablingADeletedEndpointIs409() throws Exception {
-        when(endpointService.enable(eq(merchantId), any(), eq(endpointId))).thenThrow(new WebhookEndpointDeletedException());
+        when(endpointService.enable(eq(merchantId), any(Actor.class), eq(endpointId))).thenThrow(new WebhookEndpointDeletedException());
 
         mockMvc.perform(post("/v1/webhook-endpoints/{id}/enable", endpointId).with(activeMerchant(merchantId)))
                 .andExpect(status().isConflict())

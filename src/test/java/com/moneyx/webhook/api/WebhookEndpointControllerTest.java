@@ -1,5 +1,7 @@
 package com.moneyx.webhook.api;
 
+import com.moneyx.webhook.domain.Actor;
+
 import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.event.domain.EventType;
 import com.moneyx.merchant.service.MerchantService;
@@ -73,7 +75,7 @@ class WebhookEndpointControllerTest {
     @Test
     void createReturns201WithTheSecretOnceAndNoStore() throws Exception {
         WebhookEndpoint endpoint = endpoint();
-        when(service.create(eq(merchantId), any(), eq("https://loja.com/hook"), eq(List.of("payment.paid"))))
+        when(service.create(eq(merchantId), any(Actor.class), eq("https://loja.com/hook"), eq(List.of("payment.paid"))))
                 .thenReturn(new CreatedWebhookEndpoint(endpoint, SECRET));
 
         mockMvc.perform(post("/v1/webhook-endpoints")
@@ -94,7 +96,7 @@ class WebhookEndpointControllerTest {
 
     @Test
     void createWithoutEnabledEventsPassesNullMeaningAll() throws Exception {
-        when(service.create(eq(merchantId), any(), anyString(), eq(null)))
+        when(service.create(eq(merchantId), any(Actor.class), anyString(), eq(null)))
                 .thenReturn(new CreatedWebhookEndpoint(endpoint(), SECRET));
 
         mockMvc.perform(post("/v1/webhook-endpoints")
@@ -120,7 +122,7 @@ class WebhookEndpointControllerTest {
 
     @Test
     void createReturns400WithCodeForUnsafeUrl() throws Exception {
-        when(service.create(eq(merchantId), any(), anyString(), any()))
+        when(service.create(eq(merchantId), any(Actor.class), anyString(), any()))
                 .thenThrow(new InvalidWebhookUrlException("url must not point to a private or internal address"));
 
         mockMvc.perform(post("/v1/webhook-endpoints")
@@ -137,7 +139,7 @@ class WebhookEndpointControllerTest {
 
     @Test
     void createReturns400ForUnknownEventType() throws Exception {
-        when(service.create(eq(merchantId), any(), anyString(), any()))
+        when(service.create(eq(merchantId), any(Actor.class), anyString(), any()))
                 .thenThrow(new IllegalArgumentException("Unknown event type: payment.refunded"));
 
         mockMvc.perform(post("/v1/webhook-endpoints")
@@ -152,7 +154,7 @@ class WebhookEndpointControllerTest {
 
     @Test
     void createReturns409WhenLimitIsReached() throws Exception {
-        when(service.create(eq(merchantId), any(), anyString(), any()))
+        when(service.create(eq(merchantId), any(Actor.class), anyString(), any()))
                 .thenThrow(new WebhookEndpointLimitExceededException(5));
 
         mockMvc.perform(post("/v1/webhook-endpoints")
@@ -201,7 +203,7 @@ class WebhookEndpointControllerTest {
         mockMvc.perform(delete("/v1/webhook-endpoints/{id}", id).with(activeMerchant(merchantId)))
                 .andExpect(status().isNoContent());
 
-        verify(service).delete(eq(merchantId), any(UUID.class), eq(id));
+        verify(service).delete(eq(merchantId), any(Actor.class), eq(id));
     }
 
     @Test
