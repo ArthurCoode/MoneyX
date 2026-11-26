@@ -1016,10 +1016,16 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
   (público na segurança, `@Hidden` no OpenAPI, só existe com `MONEYX_PIX_PROVIDER=mercadopago`). Segredo em
   `MERCADOPAGO_WEBHOOK_SECRET` (painel do MP → Webhooks); vazio = 404. Assinatura `x-signature: ts=,v1=` validada
   em tempo constante; manifesto `id:<data.id minúsculo>;request-id:<x-request-id>;ts:<ts>;`, HMAC-SHA256 hex
-  (**[?] manifesto não encontrado nas páginas do MP lidas em 2026-11-25: confirmar com um aviso real**). O aviso é só
+  (**CONFIRMADO com avisos reais em 2026-11-26**: id da order em minúsculas, `request-id` do header, `ts` em segundos;
+  o MP também manda `data.external_reference` na query, que NÃO entra no manifesto). O aviso é só
   GATILHO: o corpo é ignorado e o estado vem de um GET no MP (`reconcileProviderOrder`); por isso não há janela de
   tempo nem deduplicação. Respostas: 200 (inclusive order desconhecida/outro tipo), 401 assinatura inválida, 503 se o
-  MP não responder (o MP repete; espera 22 s, repete a cada 15 min). Teste real pendente: precisa de URL pública HTTPS.
+  MP não responder (o MP repete; espera 22 s, repete a cada 15 min). **Teste real feito em 2026-11-26** (túnel
+  cloudflared + painel do MP em modo teste): aviso aceito, `known=true`, pagamento PAID. O MP manda 2 avisos por evento
+  (request-ids diferentes). Lição: um `.env` com o nome da variável duplicado (`X=X=valor`) dá "assinatura inválida"
+  sem outra pista; conferir tamanho/formato do segredo (64 hex) antes de duvidar do código.
+  **Achado no sandbox:** com o APRO, uma order aprovada antes de devolver o BR Code pode ficar `processing/in_process`
+  por muito tempo; o pagamento fica CREATING (IN_PROGRESS não decide nada, nem depois do prazo) até o MP resolver.
 - **Emissor da cobrança (desde 2026-11-24, Fase 7 Etapa 7a):** `payment/provider/PixProvider` (`name()`,
   `createCharge(PixChargeRequest)` → `PixCharge(txid, copyPaste)`), escolhido por `moneyx.pix.provider` (padrão
   `sandbox` = `SandboxPixProvider`, BR Code local). `Payment.create` NÃO gera mais o Pix: `attachPixCharge` (uma vez,
@@ -1257,14 +1263,14 @@ Essas funcionalidades só devem ser consideradas em versões futuras, mediante a
 - [x] Integrar provedor real em ambiente sandbox: **Mercado Pago, API de Orders** (decidido em 2026-11-24; a Efí foi
   descartada pela burocracia de certificado mTLS). Etapas 7a–7e no PROGRESS.md. [x] 7a: porta `PixProvider`. [x] 7b: cliente do Mercado Pago.
   [x] 7c-1: criação em três fases + recuperação (V13). [x] 7c-2: provedor Mercado Pago ligado.
-  [x] 7d: conciliação (V14). [x] 7e: aviso do MP com assinatura.
+  [x] 7d: conciliação (V14). [x] 7e: aviso do MP com assinatura (confirmada com avisos reais).
 
 **Provedor Pix real concluído em 2026-11-25** (commits `4bbf314`, `1677851`, `33aed4f`): 679 testes, 14 mutações
 detectadas, ponta a ponta real no sandbox do MP (pago pela conciliação, cancelar com o MP fora = 503, vencido
 cancelado no MP antes de EXPIRED).
 
 Pendências e próximos itens da Fase 7 (evolução):
-- [ ] Teste real do aviso do MP: URL pública HTTPS (túnel), segredo no painel, confirmar o manifesto da assinatura [?].
+- [x] Teste real do aviso do MP (túnel cloudflared, 2026-11-26): manifesto da assinatura confirmado.
 - [x] Trivy bloqueante (2026-11-25; imagem 0.76.2 já era a mais nova).
 - [x] Chaves `mx_live_` com verificação de e-mail (Mailpit em dev, V16) e bloqueio de `/v1/sandbox/**` (2026-11-25).
   KYC de documentos fica fora.
