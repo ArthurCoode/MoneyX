@@ -87,7 +87,7 @@ public class MerchantController {
     @PostMapping
     public ResponseEntity<MerchantRegistrationResponse> create(@Valid @RequestBody CreateMerchantRequest request) {
         MerchantRegistration registration =
-                service.register(request.legalName(), request.document(), request.email());
+                service.register(request.legalName(), request.document(), request.email(), request.password());
 
         // 201 Created + header Location apontando para o recurso criado (convenção REST).
         // O comerciante só é acessível por /me, autenticado com a chave devolvida nesta resposta.

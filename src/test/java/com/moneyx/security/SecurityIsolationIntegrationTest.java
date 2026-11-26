@@ -434,7 +434,7 @@ class SecurityIsolationIntegrationTest {
         String body = mockMvc.perform(post("/v1/merchants")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"legalName": "%s", "document": "%s", "email": "%s"}
+                                {"legalName": "%s", "document": "%s", "email": "%s", "password": "senha-forte-123"}
                                 """.formatted(legalName, document, email)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();

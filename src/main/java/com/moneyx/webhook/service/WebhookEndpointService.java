@@ -1,5 +1,7 @@
 package com.moneyx.webhook.service;
 
+import com.moneyx.webhook.domain.Actor;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.moneyx.event.domain.EventType;
@@ -73,6 +75,12 @@ public class WebhookEndpointService {
      */
     @Transactional
     public CreatedWebhookEndpoint create(UUID merchantId, UUID apiKeyId, String url, List<String> enabledEvents) {
+        return create(merchantId, Actor.apiKey(apiKeyId), url, enabledEvents);
+    }
+
+    /** Mesmo que o anterior, com o autor explícito (API Key ou sessão do dashboard). */
+    @Transactional
+    public CreatedWebhookEndpoint create(UUID merchantId, Actor actor, String url, List<String> enabledEvents) {
         String validUrl;
         try {
             validUrl = WebhookUrlValidator.validate(url, allowLocalUrls);
@@ -96,7 +104,7 @@ public class WebhookEndpointService {
 
         WebhookEndpoint endpoint = repository.save(WebhookEndpoint.create(
                 id, merchantId, validUrl, types, ciphertext, secret.displayPrefix(), now));
-        recordHistory(endpoint, WebhookEndpointAction.CREATED, apiKeyId, now);
+        recordHistory(endpoint, WebhookEndpointAction.CREATED, actor, now);
 
         log.info("webhook_endpoint.created merchant={} endpoint={} events={}", merchantId, endpoint.getId(), types.size());
         return new CreatedWebhookEndpoint(endpoint, secret.plainText());
@@ -122,11 +130,16 @@ public class WebhookEndpointService {
      */
     @Transactional
     public void delete(UUID merchantId, UUID apiKeyId, UUID endpointId) {
+        delete(merchantId, Actor.apiKey(apiKeyId), endpointId);
+    }
+
+    @Transactional
+    public void delete(UUID merchantId, Actor actor, UUID endpointId) {
         WebhookEndpoint endpoint = repository.lockByIdAndMerchantId(endpointId, merchantId)
                 .orElseThrow(WebhookEndpointNotFoundException::new);
         Instant now = now();
         if (endpoint.delete(now)) {
-            recordHistory(endpoint, WebhookEndpointAction.DELETED, apiKeyId, now);
+            recordHistory(endpoint, WebhookEndpointAction.DELETED, actor, now);
             log.info("webhook_endpoint.deleted merchant={} endpoint={}", merchantId, endpointId);
         }
     }
@@ -141,13 +154,18 @@ public class WebhookEndpointService {
      */
     @Transactional
     public WebhookEndpoint enable(UUID merchantId, UUID apiKeyId, UUID endpointId) {
+        return enable(merchantId, Actor.apiKey(apiKeyId), endpointId);
+    }
+
+    @Transactional
+    public WebhookEndpoint enable(UUID merchantId, Actor actor, UUID endpointId) {
         WebhookEndpoint endpoint = repository.lockByIdAndMerchantId(endpointId, merchantId)
                 .orElseThrow(WebhookEndpointNotFoundException::new);
         if (!endpoint.isActive()) {
             throw new WebhookEndpointDeletedException();
         }
         if (endpoint.enable()) {
-            recordHistory(endpoint, WebhookEndpointAction.ENABLED, apiKeyId, now());
+            recordHistory(endpoint, WebhookEndpointAction.ENABLED, actor, now());
             log.info("webhook_endpoint.enabled merchant={} endpoint={}", merchantId, endpointId);
         }
         return endpoint;
@@ -178,11 +196,11 @@ public class WebhookEndpointService {
         return cipher.decrypt(endpoint.getSecretCiphertext(), endpoint.getId().toString());
     }
 
-    private void recordHistory(WebhookEndpoint endpoint, WebhookEndpointAction action, UUID apiKeyId, Instant now) {
+    private void recordHistory(WebhookEndpoint endpoint, WebhookEndpointAction action, Actor actor, Instant now) {
         EndpointSnapshot snapshot = new EndpointSnapshot(
                 endpoint.getUrl(), endpoint.getEnabledEvents().stream().map(EventType::value).toList());
         historyRepository.save(WebhookEndpointHistory.of(
-                endpoint, action, apiKeyId, jsonMapper.writeValueAsString(snapshot), now));
+                endpoint, action, actor, jsonMapper.writeValueAsString(snapshot), now));
     }
 
     /** Retrato gravado na linha do tempo. Intencionalmente SEM o segredo (nem cifrado, nem prefixo). */

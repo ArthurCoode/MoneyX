@@ -41,6 +41,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ExtendWith(OutputCaptureExtension.class)
 class ObservabilityIntegrationTest {
 
+    /** Senha do dashboard usada nos cadastros: também nunca pode aparecer no log (Etapa 8b). */
+    private static final String PASSWORD = "Senha-Canario-7f3a9c2e";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -161,7 +164,8 @@ class ObservabilityIntegrationTest {
                 .doesNotContain(secondKey)
                 .doesNotContain(webhookSecret)
                 .doesNotContain(document)
-                .doesNotContain(email);
+                .doesNotContain(email)
+                .doesNotContain(PASSWORD);
     }
 
     // ---------- métricas ----------
@@ -232,7 +236,7 @@ class ObservabilityIntegrationTest {
                         .header(RequestIds.HEADER, requestId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"legalName\": \"Observability LTDA\", \"document\": \"" + document
-                                + "\", \"email\": \"" + email + "\"}"))
+                                + "\", \"email\": \"" + email + "\", \"password\": \"" + PASSWORD + "\"}"))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         String id = JsonPath.read(body, "$.merchant.id");

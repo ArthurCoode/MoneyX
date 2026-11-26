@@ -5,8 +5,9 @@ import com.moneyx.merchant.service.MerchantService;
 import com.moneyx.security.ratelimit.SignupRateLimitFilter;
 import com.moneyx.security.ratelimit.SignupRateLimitProperties;
 import com.moneyx.security.ratelimit.RateLimiter;
-import com.moneyx.security.ratelimit.RedisTokenBucketRateLimiter;
-import com.moneyx.security.ratelimit.TokenBucketRateLimiter;
+import com.moneyx.merchant.service.SessionService;
+import com.moneyx.security.ratelimit.LoginRateLimiter;
+import com.moneyx.security.ratelimit.RateLimiterFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import jakarta.servlet.DispatcherType;
@@ -88,19 +89,22 @@ public class SecurityConfig {
      * de fatia web (@WebMvcTest), em que o ClockConfig não é carregado, usa o relógio do sistema.
      */
     @Bean
-    public RateLimiter signupRateLimiter(SignupRateLimitProperties properties, ObjectProvider<Clock> clock,
-                                         @Value("${moneyx.rate-limit.store:memory}") String store,
-                                         ObjectProvider<StringRedisTemplate> redis) {
-        Clock time = clock.getIfAvailable(Clock::systemUTC);
-        return switch (store) {
-            // Compartilhado entre instâncias (Redis do Compose). Recomendado com mais de uma instância da app.
-            case "redis" -> new RedisTokenBucketRateLimiter(redis.getObject(), "moneyx:ratelimit:signup:",
-                    properties.capacity(), properties.refillPeriod(), time);
-            case "memory" -> new TokenBucketRateLimiter(properties.capacity(), properties.refillPeriod(),
-                    properties.maxKeys(), time);
-            default -> throw new IllegalArgumentException(
-                    "moneyx.rate-limit.store must be memory or redis, got: " + store);
-        };
+    public RateLimiterFactory rateLimiterFactory(SignupRateLimitProperties properties, ObjectProvider<Clock> clock,
+                                                 @Value("${moneyx.rate-limit.store:memory}") String store,
+                                                 ObjectProvider<StringRedisTemplate> redis) {
+        // memory: no processo (uma instância). redis: compartilhado entre instâncias (o Compose usa).
+        return new RateLimiterFactory(store, redis, clock.getIfAvailable(Clock::systemUTC), properties.maxKeys());
+    }
+
+    @Bean
+    public RateLimiter signupRateLimiter(SignupRateLimitProperties properties, RateLimiterFactory factory) {
+        return factory.create("signup", properties.capacity(), properties.refillPeriod());
+    }
+
+    /** Limites do login e da redefinição de senha (Etapa 8b): implementa a porta LoginRateLimits do módulo merchant. */
+    @Bean
+    public LoginRateLimiter loginRateLimiter(RateLimiterFactory factory) {
+        return new LoginRateLimiter(factory);
     }
 
     @Bean
@@ -108,6 +112,8 @@ public class SecurityConfig {
             HttpSecurity http,
             ApiKeyService apiKeyService,
             MerchantService merchantService,
+            // Sessões do dashboard (Etapa 8b). ObjectProvider: os testes de fatia web não carregam os serviços.
+            ObjectProvider<SessionService> sessionService,
             RateLimiter signupRateLimiter,
             // Nos testes de fatia web (@WebMvcTest) não há métricas configuradas: usa um registro em memória.
             ObjectProvider<MeterRegistry> meterRegistry,
@@ -142,6 +148,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/v1/merchants").permitAll()
                         // Link do e-mail de verificação: quem abre ainda não tem a chave à mão. O token é o segredo.
                         .requestMatchers(HttpMethod.GET, "/v1/merchants/verify-email").permitAll()
+                        // Login e "esqueci a senha" (Etapa 8b): quem chama ainda não tem credencial. Limitados por IP e
+                        // por e-mail (LoginRateLimiter).
+                        .requestMatchers(HttpMethod.POST, "/v1/sessions", "/v1/merchants/password-reset",
+                                "/v1/merchants/password-reset/confirm").permitAll()
                         // Avisos do PSP (Mercado Pago): sem API Key; autenticados pela assinatura x-signature no controller.
                         .requestMatchers(HttpMethod.POST, "/v1/provider-webhooks/mercadopago").permitAll()
                         // Actuator (health, metrics, prometheus): só existe na PORTA DE GERENCIAMENTO (8081, ouvindo
@@ -166,7 +176,7 @@ public class SecurityConfig {
                 // Nosso filtro roda antes do filtro "anônimo": se a chave for válida,
                 // a requisição já chega autenticada às regras de autorização.
                 .addFilterBefore(
-                        new ApiKeyAuthenticationFilter(apiKeyService, merchantService, authenticationEntryPoint),
+                        new ApiKeyAuthenticationFilter(apiKeyService, merchantService, sessionService, authenticationEntryPoint),
                         AnonymousAuthenticationFilter.class);
 
         return http.build();

@@ -73,6 +73,7 @@ services:
       MONEYX_MAIL_HOST: mailpit
       MONEYX_MAIL_PORT: "1025"
       MONEYX_PUBLIC_BASE_URL: ${MONEYX_PUBLIC_BASE_URL:-http://localhost:8080}
+      MONEYX_DASHBOARD_BASE_URL: ${MONEYX_DASHBOARD_BASE_URL:-http://localhost:3000}
       # Rate limit do cadastro no Redis (pelo nome do serviço).
       MONEYX_RATE_LIMIT_STORE: redis
       MONEYX_REDIS_HOST: redis

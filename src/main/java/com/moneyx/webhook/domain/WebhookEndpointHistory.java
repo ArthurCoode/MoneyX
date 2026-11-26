@@ -37,9 +37,13 @@ public class WebhookEndpointHistory {
     @Column(nullable = false, updatable = false, length = 20)
     private WebhookEndpointAction action;
 
-    /** Quem fez: a API Key do comerciante, ou null quando foi o próprio sistema (ex.: desativação automática). */
+    /** Quem fez: a API Key do comerciante, ou null (sessão do dashboard, ou o próprio sistema). */
     @Column(name = "api_key_id", updatable = false)
     private UUID apiKeyId;
+
+    /** Quem fez: a sessão do dashboard (Etapa 8b), ou null (API Key, ou o próprio sistema). */
+    @Column(name = "session_id", updatable = false)
+    private UUID sessionId;
 
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
@@ -60,9 +64,21 @@ public class WebhookEndpointHistory {
     protected WebhookEndpointHistory() {
     }
 
+    /** Atalho para ações feitas por API Key (apiKeyId nulo = ação do sistema). */
     public static WebhookEndpointHistory of(WebhookEndpoint endpoint,
                                             WebhookEndpointAction action,
                                             UUID apiKeyId,
+                                            String snapshot,
+                                            Instant occurredAt) {
+        return of(endpoint, action, apiKeyId == null ? null : Actor.apiKey(apiKeyId), snapshot, occurredAt);
+    }
+
+    /**
+     * @param actor quem fez (API Key ou sessão do dashboard); null = o próprio sistema
+     */
+    public static WebhookEndpointHistory of(WebhookEndpoint endpoint,
+                                            WebhookEndpointAction action,
+                                            Actor actor,
                                             String snapshot,
                                             Instant occurredAt) {
         WebhookEndpointHistory entry = new WebhookEndpointHistory();
@@ -70,13 +86,14 @@ public class WebhookEndpointHistory {
         entry.endpointId = endpoint.getId();
         entry.merchantId = endpoint.getMerchantId();
         entry.action = Objects.requireNonNull(action, "action must not be null");
-        // Mesma regra do CHECK ck_webhook_endpoint_history_actor: sistema sem chave, comerciante sempre com chave.
-        if (action.isSystemAction() != (apiKeyId == null)) {
+        // Mesma regra do CHECK ck_webhook_endpoint_history_actor (V17): sistema sem autor, comerciante sempre com um.
+        if (action.isSystemAction() != (actor == null)) {
             throw new IllegalArgumentException(action.isSystemAction()
-                    ? "System actions must not have an apiKeyId"
-                    : "Merchant actions must have an apiKeyId");
+                    ? "System actions must not have an actor"
+                    : "Merchant actions must have an actor (API key or dashboard session)");
         }
-        entry.apiKeyId = apiKeyId;
+        entry.apiKeyId = actor == null ? null : actor.apiKeyId();
+        entry.sessionId = actor == null ? null : actor.sessionId();
         entry.snapshot = Objects.requireNonNull(snapshot, "snapshot must not be null");
         entry.occurredAt = Objects.requireNonNull(occurredAt, "occurredAt must not be null");
         return entry;
@@ -100,6 +117,10 @@ public class WebhookEndpointHistory {
 
     public UUID getApiKeyId() {
         return apiKeyId;
+    }
+
+    public UUID getSessionId() {
+        return sessionId;
     }
 
     public Instant getOccurredAt() {

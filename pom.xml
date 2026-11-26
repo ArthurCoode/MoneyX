@@ -48,6 +48,13 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
 		</dependency>
+		<!-- Argon2id para as senhas do dashboard: o Argon2PasswordEncoder do Spring Security usa o BouncyCastle.
+		     Autorizado em 2026-11-26 (Etapa 8b). Versão fixa: o Spring Boot não a gerencia. -->
+		<dependency>
+			<groupId>org.bouncycastle</groupId>
+			<artifactId>bcprov-jdk18on</artifactId>
+			<version>1.87</version>
+		</dependency>
 		<!-- Rate limit compartilhado entre instâncias (moneyx.rate-limit.store=redis). Autorizado em 2026-11-25. -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

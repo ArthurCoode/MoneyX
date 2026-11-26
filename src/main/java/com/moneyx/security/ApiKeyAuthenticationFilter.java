@@ -1,5 +1,9 @@
 package com.moneyx.security;
 
+import com.moneyx.merchant.domain.MerchantSession;
+import com.moneyx.merchant.service.SessionService;
+import org.springframework.beans.factory.ObjectProvider;
+
 import com.moneyx.apikey.domain.ApiKey;
 import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.merchant.domain.Merchant;
@@ -47,15 +51,18 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     private final ApiKeyService apiKeyService;
     private final MerchantService merchantService;
+    private final ObjectProvider<SessionService> sessionService;
     private final AuthenticationEntryPoint authenticationEntryPoint;
     private final SecurityContextHolderStrategy securityContextHolder =
             SecurityContextHolder.getContextHolderStrategy();
 
     public ApiKeyAuthenticationFilter(ApiKeyService apiKeyService,
                                       MerchantService merchantService,
+                                      ObjectProvider<SessionService> sessionService,
                                       AuthenticationEntryPoint authenticationEntryPoint) {
         this.apiKeyService = apiKeyService;
         this.merchantService = merchantService;
+        this.sessionService = sessionService;
         this.authenticationEntryPoint = authenticationEntryPoint;
     }
 
@@ -94,19 +101,29 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         }
         String plainTextKey = header.substring(BEARER_PREFIX.length()).trim();
 
+        // Sessão do dashboard (Etapa 8b): o BFF manda o token da sessão (mx_sess_...) no mesmo header.
+        if (plainTextKey.startsWith(MerchantSession.TOKEN_PREFIX)) {
+            SessionService sessions = sessionService.getIfAvailable();
+            return sessions == null ? Optional.empty() : sessions.authenticate(plainTextKey)
+                    .map(session -> authenticationOf(AuthenticatedMerchant.ofSession(
+                            session.getMerchantId(), session.getId())));
+        }
+
         return apiKeyService.findActiveByPlainText(plainTextKey)
                 .map(this::toAuthentication);
     }
 
     private Authentication toAuthentication(ApiKey apiKey) {
-        // A FK api_keys -> merchants garante que o comerciante existe.
-        Merchant merchant = merchantService.getById(apiKey.getMerchantId());
+        return authenticationOf(new AuthenticatedMerchant(apiKey.getMerchantId(), apiKey.getId(), apiKey.isLive()));
+    }
+
+    private Authentication authenticationOf(AuthenticatedMerchant principal) {
+        // A FK (api_keys/merchant_sessions -> merchants) garante que o comerciante existe.
+        Merchant merchant = merchantService.getById(principal.merchantId());
 
         List<GrantedAuthority> authorities = merchant.isActive()
                 ? List.of(new SimpleGrantedAuthority(SecurityConfig.ACTIVE_MERCHANT))
                 : List.of();
-
-        AuthenticatedMerchant principal = new AuthenticatedMerchant(merchant.getId(), apiKey.getId(), apiKey.isLive());
 
         // Apesar do nome, UsernamePasswordAuthenticationToken é a implementação genérica de
         // Authentication do Spring Security. "authenticated(...)" marca a identidade como já

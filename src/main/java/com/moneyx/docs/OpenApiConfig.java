@@ -81,7 +81,7 @@ public class OpenApiConfig {
                                 .description("Envie a API Key no header `Authorization: Bearer mx_test_...`."))
                         .addSchemas(PROBLEM, problemSchema())
                         .addResponses("BadRequest", problem("Requisição inválida (campos, parâmetros ou JSON)."))
-                        .addResponses("Unauthorized", problem("API Key ausente, inválida ou revogada.")
+                        .addResponses("Unauthorized", problem("Credencial ausente, inválida, revogada ou expirada (API Key ou sessão do dashboard); no login, e-mail ou senha errados (`invalid_credentials`).")
                                 .addHeaderObject("WWW-Authenticate", new Header().schema(new StringSchema()._default("Bearer"))))
                         .addResponses("Forbidden", problem("Proibido: comerciante suspenso ou encerrado, ou operação não permitida para esta chave/conta (ver `code`, ex.: `email_not_verified`, `sandbox_requires_test_key`)."))
                         .addResponses("NotFound", problem("Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."))

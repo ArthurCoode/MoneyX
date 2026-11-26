@@ -1,5 +1,7 @@
 package com.moneyx.webhook.api;
 
+import com.moneyx.webhook.domain.Actor;
+
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -58,7 +60,7 @@ public class WebhookEndpointController {
             @Valid @RequestBody CreateWebhookEndpointRequest request) {
 
         CreatedWebhookEndpoint created = service.create(
-                principal.merchantId(), principal.apiKeyId(), request.url(), request.enabledEvents());
+                principal.merchantId(), actorOf(principal), request.url(), request.enabledEvents());
 
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}").buildAndExpand(created.endpoint().getId()).toUri();
@@ -94,7 +96,7 @@ public class WebhookEndpointController {
     @ApiResponse(responseCode = "404", ref = "#/components/responses/NotFound")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
-        service.delete(principal.merchantId(), principal.apiKeyId(), id);
+        service.delete(principal.merchantId(), actorOf(principal), id);
         return ResponseEntity.noContent().build();
     }
 
@@ -106,7 +108,7 @@ public class WebhookEndpointController {
     @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping("/{id}/enable")
     public WebhookEndpointResponse enable(@AuthenticationPrincipal AuthenticatedMerchant principal, @PathVariable UUID id) {
-        return WebhookEndpointResponse.from(service.enable(principal.merchantId(), principal.apiKeyId(), id));
+        return WebhookEndpointResponse.from(service.enable(principal.merchantId(), actorOf(principal), id));
     }
 
     /** Entregas do endpoint, mais recentes primeiro: ?limit=10&startingAfter=<id>&status=failed */
@@ -143,5 +145,10 @@ public class WebhookEndpointController {
     public WebhookEndpointHistoryResponse history(@AuthenticationPrincipal AuthenticatedMerchant principal,
                                                   @PathVariable UUID id) {
         return WebhookEndpointHistoryResponse.from(service.history(principal.merchantId(), id));
+    }
+
+    /** Quem está agindo: a sessão do dashboard (pessoa logada) ou a API Key (integração). */
+    private static Actor actorOf(AuthenticatedMerchant principal) {
+        return principal.sessionId() != null ? Actor.session(principal.sessionId()) : Actor.apiKey(principal.apiKeyId());
     }
 }

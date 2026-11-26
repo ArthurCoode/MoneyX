@@ -30,6 +30,17 @@ public record CreateMerchantRequest(
         @NotBlank
         @Email
         @Size(max = 254)
-        String email
+        String email,
+
+        // Senha do dashboard (Etapa 8b): 12 a 128 caracteres; o serviço aplica a PasswordPolicy completa.
+        @NotBlank
+        @Size(min = 12, max = 128)
+        String password
 ) {
+
+    /** O toString padrão de um record imprimiria a senha: nunca em log. */
+    @Override
+    public String toString() {
+        return "CreateMerchantRequest[legalName=" + legalName + ", email=***, password=***]";
+    }
 }
