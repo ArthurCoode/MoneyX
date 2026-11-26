@@ -1365,7 +1365,42 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
     `toString`. `ObservabilityIntegrationTest` agora também prova que a senha nunca vai para o log.
   - Testes: `DashboardLoginIntegrationTest` (20, banco + filtro reais), `MerchantSessionTest` (unidade).
 - [ ] **8c** Landing page com 3D (R3F) e animações de rolagem (GSAP), respeitando `prefers-reduced-motion`.
-- [ ] **8d** BFF no Next.js (cookie HttpOnly, CSP com nonce) + telas de cadastro e login.
+- [x] **8d** (2026-11-27) BFF no Next.js + telas de conta. Decisões do desenvolvedor: o próprio token `mx_sess_` num
+  cookie `__Host-mx_session` (HttpOnly, Secure, SameSite=Lax, Path=/, expira com o limite absoluto da sessão); CSRF =
+  SameSite=Lax + checagem de Origin; rotas em português.
+  - **BFF:** `src/lib/server/api.ts` (`import "server-only"`: o build falha se um componente de cliente importar) cria o
+    cliente `openapi-fetch` por requisição com `Authorization: Bearer mx_sess_...` e `X-Forwarded-For`; `cache:
+    no-store`, timeout 10 s, erro de rede vira `ApiUnavailableError` (mensagem "não conseguimos falar com o MoneyX").
+    `MONEYX_API_URL` (padrão http://localhost:8080). Escritas por **Server Actions** (`src/app/actions/auth.ts`):
+    login, cadastro (já abre a sessão e mostra a chave `mx_test_` do cadastro UMA vez), esqueci a senha (mensagem
+    neutra, como a API), redefinir (apaga o cookie: a API derrubou todas as sessões) e sair (DELETE na API, melhor
+    esforço, e apaga o cookie). `redirect()` sempre fora de try/catch.
+  - **`src/proxy.ts`** (Next 16: "proxy" é o antigo middleware): (1) **CSRF**: escrita (não GET/HEAD/OPTIONS) sem
+    `Origin`, com `Origin: null` ou de outro host → 403. A checagem nativa das Server Actions do Next só AVISA quando o
+    Origin falta, por isso a nossa existe; (2) **CSP com nonce** por requisição (`script-src 'self' 'nonce-…'
+    'strict-dynamic'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`, `frame-ancestors 'none'`; estilos
+    com `'unsafe-inline'`; em dev + `'unsafe-eval'` e `ws:`). O layout raiz lê `headers()` → TODAS as rotas dinâmicas
+    (página pré-gerada não teria o nonce e os scripts seriam bloqueados); (3) `/painel/**` sem cookie → `/entrar?proximo=`;
+    `/entrar?sessao=expirada` apaga o cookie (apagar cookie `__Host-` exige Secure + Path=/ no Set-Cookie).
+  - **Quem decide a sessão é a API:** `requireMerchant()` (`src/lib/server/merchant.ts`, `cache` do React) chama
+    `GET /v1/merchants/me`; 401/403 → `/entrar?sessao=expirada`. Destino pós-login só `/painel` ou `/painel/...` sem `//`
+    nem `\` (`safeRedirectPath`, contra open redirect).
+  - **IP do visitante:** o Next só PREENCHE `X-Forwarded-For` se ele não veio (`??=` no base-server) → o BFF repassa o
+    ÚLTIMO item, e só se tiver cara de IP. A API só acredita nele com o IP do Next em `MONEYX_TRUSTED_PROXIES` (8f).
+    **Risco residual:** com o Next exposto direto, o visitante escolhe o "IP" (o limite por e-mail continua valendo);
+    em produção o Next fica atrás de um proxy que sobrescreve o header. Sem confiar no Next, todos os visitantes dividem
+    os baldes por IP (o E2E estoura o limite de cadastro 5/IP: limpar `moneyx:ratelimit:*` no Redis de dev).
+  - **Erros:** `src/lib/forms/problem.ts` traduz pelo `code` estável e por campo (`errors[].field`); o `detail` em inglês
+    da API nunca aparece. 429 → minutos do Retry-After arredondados para cima. Senha nunca volta preenchida.
+  - Telas: `(conta)/entrar`, `cadastro`, `esqueci-a-senha`, `redefinir-senha`; `/painel` mínimo (8e preenche).
+    Componentes `Field` (rótulo + dica + erro ligados por `aria-describedby`, erro em texto), `SubmitButton`
+    (`useFormStatus`), `Alert` (`role=alert`/`status`, "Erro:"/"Pronto:" em texto).
+  - **Testes:** Vitest 39 (CSRF, CSP, IP, mensagens, open redirect). **Playwright** (`npm run e2e`, contra ambiente no ar;
+    `E2E_BASE_URL`, `MAILPIT_URL`): fluxo completo com o e-mail real no Mailpit, cookie HttpOnly invisível ao JS, token
+    morto depois de sair, link de redefinição de uso único, `?proximo=`, erros por campo, e XSS por HTML injetado
+    (`<img onerror>`) bloqueado pela CSP. Script criado por JS confiável é PERMITIDO pelo `strict-dynamic` (de propósito):
+    não serve como teste de XSS. O role="alert" vazio do Next (anunciador de rota) exige filtrar pelo texto "Erro:".
+    Mutações: 10 unitárias + 2 E2E (cookie sem HttpOnly; sair sem DELETE na API), todas mortas, controle verde.
 - [ ] **8e** Dashboard: pagamentos (lista/detalhe/cancelar), API Keys, webhooks e eventos.
 - [ ] **8f** Imagem Docker do frontend + Compose + testes ponta a ponta (Playwright).
 - Pendência visual: trocar os ícones de texto do `StatusBadge` por SVG (o ⌛ aparece como emoji colorido).
