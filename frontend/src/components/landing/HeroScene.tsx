@@ -7,16 +7,16 @@ import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, type Group, t
 
 /**
  * Cena 3D do herói: três anéis orbitando um núcleo e uma espiral de partículas subindo, nas cores da paleta
- * (esmeralda → azul → violeta). A ideia é o "fluxo" de um pagamento: entra, gira, confirma.
+ * (limão → branco → limão escuro). A ideia é o "fluxo" de um pagamento: entra, gira, confirma.
  *
  * Só é carregada no navegador (import dinâmico em HeroVisual) e só quando o visitante NÃO pediu menos movimento.
  * `frameloop` pausa a renderização quando a cena sai da tela (economia de bateria/GPU).
  */
 
 // Cores repetidas dos tokens: o WebGL não lê variáveis CSS. Fonte da verdade: src/styles/tokens.css.
-const PRIMARY = "#12d6a0";
-const INFO = "#22b8f0";
-const ACCENT = "#7c5cff";
+const PRIMARY = "#d4ff3a";
+const INFO = "#ffffff";
+const ACCENT = "#8fbf1a";
 
 const PARTICLES = 900;
 

@@ -6,7 +6,9 @@
   gap: var(--space-8);
   padding: var(--space-12) var(--space-4);
   background:
-    radial-gradient(60rem 30rem at 50% -10%, color-mix(in srgb, var(--color-accent) 18%, transparent), transparent),
+    radial-gradient(50rem 26rem at 50% -12%, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent),
+    linear-gradient(color-mix(in srgb, var(--color-text) 4%, transparent) 1px, transparent 1px) 0 0 / 56px 56px,
+    linear-gradient(90deg, color-mix(in srgb, var(--color-text) 4%, transparent) 1px, transparent 1px) 0 0 / 56px 56px,
     var(--color-bg);
 }
 
@@ -82,8 +84,8 @@
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  min-height: 44px;
-  border-radius: var(--radius-sm);
+  min-height: 46px;
+  border-radius: var(--radius-pill);
   background: var(--color-primary);
   color: var(--color-primary-contrast);
   font-weight: 700;

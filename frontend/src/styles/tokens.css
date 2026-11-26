@@ -1,27 +1,32 @@
 /*
- * Paleta "Midnight Emerald" (SKILL.md, Fase 8). ÚNICO lugar com valores de cor: os componentes usam só var(--color-*).
- * Trocar a identidade visual = mudar este arquivo.
+ * Paleta "Lime Noir" (SKILL.md, Fase 8; trocou a "Midnight Emerald" em 2026-11-27 a pedido do desenvolvedor):
+ * preto, branco e verde-limão. ÚNICO lugar com valores de cor: os componentes usam só var(--color-*).
+ *
+ * Contraste (WCAG AA pede >= 4,5:1 para texto):
+ *   texto #FAFAFA sobre o fundo #09090B ≈ 19:1 · texto secundário #A1A1AA sobre o fundo ≈ 7,8:1
+ *   limão #D4FF3A sobre o fundo ≈ 17:1 · preto #0A0A0A sobre o limão (botão) ≈ 17:1
  */
 :root {
-  --color-bg: #070b14;
-  --color-surface: #0f1626;
-  --color-surface-raised: #152036;
-  --color-border: #1e293b;
-  --color-text: #e6edf7;
-  --color-text-muted: #8a97ad;
+  --color-bg: #09090b;
+  --color-surface: #111113;
+  --color-surface-raised: #19191c;
+  --color-border: #27272a;
+  --color-text: #fafafa;
+  --color-text-muted: #a1a1aa;
 
-  --color-primary: #12d6a0;
-  --color-primary-contrast: #04130e; /* texto sobre o botão primário */
-  --color-accent: #7c5cff;
-  --color-info: #22b8f0;
-  --color-warning: #f5b83d;
-  --color-danger: #ff5c7a;
+  --color-primary: #d4ff3a;
+  --color-primary-contrast: #0a0a0a; /* texto sobre o botão primário */
+  --color-accent: #f2ffc2; /* limão bem claro: brilhos e detalhes */
+  --color-info: #d4ff3a; /* links */
+  --color-warning: #ff9f1c; /* laranja: bem diferente do limão (PENDING não se confunde com PAID) */
+  --color-danger: #ff5a5f;
 
-  --gradient-hero: linear-gradient(120deg, #12d6a0 0%, #22b8f0 50%, #7c5cff 100%);
+  --gradient-hero: linear-gradient(110deg, #d4ff3a 0%, #ecff9e 45%, #ffffff 100%);
 
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 24px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
+  --radius-pill: 999px;
 
   --space-1: 4px;
   --space-2: 8px;

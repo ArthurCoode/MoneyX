@@ -1300,23 +1300,27 @@ Escopo: **landing page** + **dashboard do comerciante**, com animações e 3D.
 - **Segurança:** API Keys (`mx_test_`/`mx_live_`) são segredos de servidor e **nunca** vão para o navegador. O
   dashboard usa o servidor do Next.js como **BFF** (cookie de sessão `HttpOnly`; as chamadas à API Java saem do
   servidor). Login do comerciante: e-mail + senha com sessão `mx_sess_` (8b/8d).
-- **Paleta "Midnight Emerald"** (escura primeiro; modo claro do dashboard depois). Sempre via tokens CSS
-  (`--color-*`), nunca cores soltas nos componentes:
+- **Paleta "Lime Noir"** (desde 2026-11-27; trocou a "Midnight Emerald" a pedido do desenvolvedor: "moderno, verde
+  limão, preto e branco"; a alternativa "séria" seria preto, branco e dourado). Escura. Sempre via tokens CSS
+  (`--color-*` em `src/styles/tokens.css`), nunca cores soltas nos componentes (exceção: `HeroScene.tsx`, porque o
+  WebGL não lê CSS):
 
-| Token | Cor | Uso |
-|---|---|---|
-| `--color-bg` | `#070B14` | fundo da página |
-| `--color-surface` | `#0F1626` | cards, painéis |
-| `--color-border` | `#1E293B` | divisórias |
-| `--color-text` | `#E6EDF7` | texto principal |
-| `--color-text-muted` | `#8A97AD` | legendas |
-| `--color-primary` | `#12D6A0` | ações, PAID, destaques |
-| `--color-accent` | `#7C5CFF` | brilho 3D, partículas |
-| `--color-info` | `#22B8F0` | meio do gradiente, links |
-| `--color-warning` | `#F5B83D` | PENDING, avisos |
-| `--color-danger` | `#FF5C7A` | erros, CANCELED/EXPIRED |
-| gradiente herói | `#12D6A0 → #22B8F0 → #7C5CFF` | landing, cena 3D |
+| Token | Cor | Uso | Contraste no fundo |
+|---|---|---|---|
+| `--color-bg` | `#09090B` | fundo da página | — |
+| `--color-surface` / `-raised` | `#111113` / `#19191C` | cards, painéis | — |
+| `--color-border` | `#27272A` | divisórias | — |
+| `--color-text` | `#FAFAFA` | texto principal | 19,1:1 |
+| `--color-text-muted` | `#A1A1AA` | legendas | 7,8:1 |
+| `--color-primary` | `#D4FF3A` | ações, links, PAID, destaques | 17,2:1 |
+| `--color-primary-contrast` | `#0A0A0A` | texto sobre o limão | 17,1:1 |
+| `--color-accent` | `#F2FFC2` | brilhos | — |
+| `--color-warning` | `#FF9F1C` | PENDING (laranja: não se confunde com o limão) | 9,7:1 |
+| `--color-danger` | `#FF5A5F` | erros, CANCELED/EXPIRED | 6,5:1 |
+| gradiente herói | `#D4FF3A → #ECFF9E → #FFFFFF` | título da landing | — |
 
+  Estilo: botões e navegação em pílula (`--radius-pill`), cartões com raio grande, grade sutil ao fundo da landing e
+  das telas de conta, item ativo do painel em limão com texto preto, faixa limão na chamada final da landing.
   Regras: contraste WCAG AA (texto >= 4,5:1); estado nunca só pela cor (texto + ícone); não usar o teal oficial do
   Pix (`#32BCAD`) como cor da marca; respeitar `prefers-reduced-motion` nas animações/3D.
 - **Login do comerciante no dashboard:** e-mail + senha (decidido em 2026-11-26), com hash forte, rate limit e sessão
