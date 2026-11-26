@@ -43,6 +43,19 @@ class SignupRateLimitFilterTest {
     @MockitoBean
     private MerchantService merchantService;
 
+    /** Limites mostrados no /me (módulo payment). */
+    @MockitoBean
+    private com.moneyx.payment.service.PaymentVolumeLimitQuery volumeLimitQuery;
+
+    @MockitoBean
+    private com.moneyx.merchant.service.EmailVerificationService emailVerificationService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubVolumeLimits() {
+        org.mockito.Mockito.when(volumeLimitQuery.effectiveFor(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.moneyx.payment.service.VolumeLimits(20_000_000, 200_000_000));
+    }
+
     @MockitoBean
     private ApiKeyService apiKeyService;
 

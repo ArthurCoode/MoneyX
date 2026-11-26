@@ -47,6 +47,10 @@ public class Merchant {
     private Instant updatedAt;
 
     /** Controle de concorrência otimista: evita que duas atualizações simultâneas se sobrescrevam. */
+    /** Quando o e-mail foi confirmado (link com token). Null = não verificado: não pode criar chaves mx_live_. */
+    @Column(name = "email_verified_at")
+    private Instant emailVerifiedAt;
+
     @Version
     private Long version;
 
@@ -83,6 +87,22 @@ public class Merchant {
             throw new IllegalStateException("Merchant is already CLOSED.");
         }
         changeStatus(MerchantStatus.CLOSED);
+    }
+
+    /** Confirma o e-mail. Idempotente: uma segunda confirmação mantém o instante da primeira. */
+    public void markEmailVerified(Instant now) {
+        if (emailVerifiedAt == null) {
+            this.emailVerifiedAt = now;
+            this.updatedAt = now;
+        }
+    }
+
+    public boolean isEmailVerified() {
+        return emailVerifiedAt != null;
+    }
+
+    public Instant getEmailVerifiedAt() {
+        return emailVerifiedAt;
     }
 
     /** Apenas comerciantes ACTIVE podem operar (usar a API). SUSPENDED e CLOSED ficam bloqueados. */

@@ -43,6 +43,9 @@ class MerchantServiceTest {
     @Mock
     private ApiKeyService apiKeyService;
 
+    @Mock
+    private EmailVerificationService emailVerification;
+
     @InjectMocks
     private MerchantService service;
 

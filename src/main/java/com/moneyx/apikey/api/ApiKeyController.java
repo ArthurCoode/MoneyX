@@ -1,5 +1,9 @@
 package com.moneyx.apikey.api;
 
+import com.moneyx.apikey.api.dto.CreateApiKeyRequest;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.RequestBody;
+
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -41,12 +45,18 @@ public class ApiKeyController {
 
     /** Cria uma nova chave. O segredo aparece SOMENTE nesta resposta. */
     @Operation(operationId = "createApiKey", summary = "Criar API Key",
-            description = "O segredo aparece **somente** nesta resposta. Máximo de 5 chaves ativas.")
+            description = "O segredo aparece **somente** nesta resposta. Máximo de 5 chaves ativas. "
+                    + "Corpo opcional `{\"mode\": \"live\"}` cria uma chave de produção (`mx_live_`), que exige o "
+                    + "e-mail verificado (senão 403 `email_not_verified`); sem corpo, chave de teste (`mx_test_`).")
     @ApiResponse(responseCode = "201", description = "Chave criada.")
+    @ApiResponse(responseCode = "400", ref = "#/components/responses/BadRequest")
+    @ApiResponse(responseCode = "403", ref = "#/components/responses/Forbidden")
     @ApiResponse(responseCode = "409", ref = "#/components/responses/Conflict")
     @PostMapping
-    public ResponseEntity<CreatedApiKeyResponse> create(@AuthenticationPrincipal AuthenticatedMerchant principal) {
-        CreatedApiKeyResponse body = CreatedApiKeyResponse.from(service.issueFor(principal.merchantId()));
+    public ResponseEntity<CreatedApiKeyResponse> create(@AuthenticationPrincipal AuthenticatedMerchant principal,
+                                                        @Valid @RequestBody(required = false) CreateApiKeyRequest request) {
+        boolean live = request != null && request.live();
+        CreatedApiKeyResponse body = CreatedApiKeyResponse.from(service.issueFor(principal.merchantId(), live));
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .cacheControl(CacheControl.noStore())

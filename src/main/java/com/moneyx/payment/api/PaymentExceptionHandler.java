@@ -9,6 +9,7 @@ import com.moneyx.payment.exception.PaymentNotPendingException;
 import com.moneyx.payment.exception.PaymentProviderRejectedException;
 import com.moneyx.payment.exception.PaymentProviderUnavailableException;
 import com.moneyx.payment.exception.SandboxPaymentNotSupportedException;
+import com.moneyx.payment.exception.SandboxRequiresTestKeyException;
 import com.moneyx.payment.exception.VolumeLimitExceededException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -85,6 +86,11 @@ public class PaymentExceptionHandler {
         ProblemDetail body = withCode(HttpStatus.CONFLICT, ex.getMessage(), "payment_not_pending");
         body.setProperty("paymentStatus", ex.getStatus().name());
         return body;
+    }
+
+    @ExceptionHandler(SandboxRequiresTestKeyException.class)
+    public ProblemDetail handleSandboxRequiresTestKey(SandboxRequiresTestKeyException ex) {
+        return withCode(HttpStatus.FORBIDDEN, ex.getMessage(), "sandbox_requires_test_key");
     }
 
     @ExceptionHandler(SandboxPaymentNotSupportedException.class)

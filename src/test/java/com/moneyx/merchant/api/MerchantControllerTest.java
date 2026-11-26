@@ -57,6 +57,19 @@ class MerchantControllerTest {
     @MockitoBean
     private MerchantService service;
 
+    /** Limites mostrados no /me (módulo payment). */
+    @MockitoBean
+    private com.moneyx.payment.service.PaymentVolumeLimitQuery volumeLimitQuery;
+
+    @MockitoBean
+    private com.moneyx.merchant.service.EmailVerificationService emailVerificationService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubVolumeLimits() {
+        org.mockito.Mockito.when(volumeLimitQuery.effectiveFor(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.moneyx.payment.service.VolumeLimits(20_000_000, 200_000_000));
+    }
+
     @MockitoBean
     private ApiKeyService apiKeyService;
 
@@ -169,6 +182,8 @@ class MerchantControllerTest {
                 .andExpect(jsonPath("$.id").value(merchant.getId().toString()))
                 .andExpect(jsonPath("$.legalName").value("Loja LTDA"))
                 .andExpect(jsonPath("$.email").value("contato@loja.com"))
+                .andExpect(jsonPath("$.volumeLimits.daily").value(20_000_000))
+                .andExpect(jsonPath("$.volumeLimits.monthly").value(200_000_000))
                 .andExpect(jsonPath("$.version").doesNotExist());
     }
 
@@ -207,5 +222,54 @@ class MerchantControllerTest {
                 .andExpect(jsonPath("$.detail").value("The requested resource was not found"));
 
         verify(service, never()).getById(any());
+    }
+
+    // ---------- verificação de e-mail ----------
+
+    @Test
+    void theVerificationLinkIsPublicAndNotCached() throws Exception {
+        mockMvc.perform(get("/v1/merchants/verify-email").param("token", "abc"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.emailVerified").value(true));
+        org.mockito.Mockito.verify(emailVerificationService).confirm("abc");
+    }
+
+    @Test
+    void anInvalidVerificationLinkAnswers400WithACode() throws Exception {
+        org.mockito.Mockito.doThrow(new com.moneyx.merchant.exception.EmailVerificationException(
+                        com.moneyx.merchant.exception.EmailVerificationException.Reason.EXPIRED_TOKEN))
+                .when(emailVerificationService).confirm("old");
+
+        mockMvc.perform(get("/v1/merchants/verify-email").param("token", "old"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("verification_token_expired"));
+    }
+
+    @Test
+    void resendingTooSoonAnswers429WithRetryAfter() throws Exception {
+        UUID id = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new com.moneyx.merchant.exception.EmailVerificationException(
+                        com.moneyx.merchant.exception.EmailVerificationException.Reason.TOO_SOON,
+                        java.time.Duration.ofMillis(40_200)))
+                .when(emailVerificationService).resend(id);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/v1/merchants/me/email-verification").with(activeMerchant(id)))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "41"))
+                .andExpect(jsonPath("$.code").value("verification_email_rate_limited"));
+    }
+
+    @Test
+    void resendingRequiresAuthenticationAndAnswers202() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/v1/merchants/me/email-verification"))
+                .andExpect(status().isUnauthorized());
+        UUID id = UUID.randomUUID();
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/v1/merchants/me/email-verification").with(activeMerchant(id)))
+                .andExpect(status().isAccepted());
+        org.mockito.Mockito.verify(emailVerificationService).resend(id);
     }
 }

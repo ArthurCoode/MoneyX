@@ -12,6 +12,8 @@ import java.util.UUID;
 public record ApiKeyResponse(
         UUID id,
         String prefix,
+        /** "test" (mx_test_) ou "live" (mx_live_). */
+        String mode,
         boolean active,
         Instant createdAt,
         Instant revokedAt
@@ -21,6 +23,7 @@ public record ApiKeyResponse(
         return new ApiKeyResponse(
                 apiKey.getId(),
                 apiKey.getKeyPrefix(),
+                apiKey.isLive() ? "live" : "test",
                 apiKey.isActive(),
                 apiKey.getCreatedAt(),
                 apiKey.getRevokedAt()

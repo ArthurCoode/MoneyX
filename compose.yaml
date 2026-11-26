@@ -1,4 +1,4 @@
-# Ambiente local completo: PostgreSQL + aplicação MoneyX.
+# Ambiente local completo: PostgreSQL + Redis (rate limit) + Mailpit (e-mail de dev) + aplicação MoneyX.
 #
 #   docker compose up -d --build     → sobe tudo (compila a imagem da app se o código mudou)
 #   docker compose up -d postgres    → só o banco (para rodar a app pelo IntelliJ / mvnw)
@@ -27,6 +27,31 @@ services:
       timeout: 5s
       retries: 10
 
+  # Caixa de e-mail FALSA de desenvolvimento: recebe por SMTP tudo o que a app envia (verificação de e-mail) e mostra
+  # em http://localhost:8025. Nenhum e-mail sai para a internet. Versão fixada por digest (como as imagens do Dockerfile).
+  mailpit:
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    container_name: moneyx-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"   # interface web
+      - "127.0.0.1:1025:1025"   # SMTP (para a app rodando pelo IntelliJ / mvnw)
+
+  # Baldes do rate limit do cadastro (moneyx.rate-limit.store=redis), compartilhados se houver mais de uma instância
+  # da app. Só em memória (sem gravar em disco): perder os baldes num reinício só "perdoa" quem estava limitado.
+  redis:
+    image: redis:8.8.4-alpine@sha256:1273af45b299d2b8b60d0e400d90aa6c2c5b1794f01d6a7ca60ff3ba6e65efb5
+    container_name: moneyx-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"   # para a app rodando pelo IntelliJ / mvnw
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   app:
     build: .
     image: moneyx-app:local
@@ -35,11 +60,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       # Dentro da rede do Compose o banco é alcançado pelo NOME do serviço ("postgres"), não por localhost.
       # Variáveis de ambiente sobrepõem o application.properties (SPRING_DATASOURCE_URL = spring.datasource.url).
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      # E-mail de verificação: o SMTP de desenvolvimento é o Mailpit (pelo nome do serviço).
+      MONEYX_MAIL_HOST: mailpit
+      MONEYX_MAIL_PORT: "1025"
+      MONEYX_PUBLIC_BASE_URL: ${MONEYX_PUBLIC_BASE_URL:-http://localhost:8080}
+      # Rate limit do cadastro no Redis (pelo nome do serviço).
+      MONEYX_RATE_LIMIT_STORE: redis
+      MONEYX_REDIS_HOST: redis
+      # Proxies confiáveis para X-Forwarded-For/Proto (regex). Vazio = nenhum (padrão seguro).
+      MONEYX_TRUSTED_PROXIES: ${MONEYX_TRUSTED_PROXIES:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
       MONEYX_WEBHOOK_ENCRYPTION_KEY: ${MONEYX_WEBHOOK_ENCRYPTION_KEY:?defina MONEYX_WEBHOOK_ENCRYPTION_KEY no .env}
       # Opcional: só durante a rotação da chave (vazio = nenhuma chave anterior).

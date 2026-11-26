@@ -1,5 +1,7 @@
 package com.moneyx.apikey.api;
 
+import com.moneyx.apikey.exception.EmailNotVerifiedException;
+
 import com.moneyx.apikey.exception.ApiKeyLimitExceededException;
 import com.moneyx.apikey.exception.ApiKeyNotFoundException;
 import com.moneyx.apikey.exception.LastActiveApiKeyException;
@@ -31,6 +33,13 @@ public class ApiKeyExceptionHandler {
     @ExceptionHandler(LastActiveApiKeyException.class)
     public ProblemDetail handleLastActiveKey(LastActiveApiKeyException ex) {
         return conflict(ex, "last_active_api_key");
+    }
+
+    @ExceptionHandler(EmailNotVerifiedException.class)
+    public ProblemDetail handleEmailNotVerified(EmailNotVerifiedException ex) {
+        ProblemDetail body = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        body.setProperty("code", "email_not_verified");
+        return body;
     }
 
     private static ProblemDetail conflict(RuntimeException ex, String code) {

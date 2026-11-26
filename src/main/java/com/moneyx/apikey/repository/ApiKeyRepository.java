@@ -37,4 +37,11 @@ public interface ApiKeyRepository extends JpaRepository<ApiKey, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select k from ApiKey k where k.merchantId = :merchantId and k.revokedAt is null")
     List<ApiKey> lockActiveByMerchantId(UUID merchantId);
+
+    /**
+     * O e-mail do comerciante foi verificado? SQL nativo sobre merchants: o módulo apikey não importa o merchant
+     * (mesmo padrão do payment).
+     */
+    @Query(value = "SELECT email_verified_at IS NOT NULL FROM merchants WHERE id = :merchantId", nativeQuery = true)
+    Optional<Boolean> isMerchantEmailVerified(UUID merchantId);
 }

@@ -11,5 +11,10 @@ import java.util.UUID;
  *
  * Contém apenas identificadores. O segredo da chave nunca entra aqui.
  */
-public record AuthenticatedMerchant(UUID merchantId, UUID apiKeyId) {
+public record AuthenticatedMerchant(UUID merchantId, UUID apiKeyId, boolean live) {
+
+    /** Chave de teste (mx_test_). */
+    public AuthenticatedMerchant(UUID merchantId, UUID apiKeyId) {
+        this(merchantId, apiKeyId, false);
+    }
 }

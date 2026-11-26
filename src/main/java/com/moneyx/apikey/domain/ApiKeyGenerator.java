@@ -22,6 +22,8 @@ import java.util.HexFormat;
 public final class ApiKeyGenerator {
 
     public static final String TEST_PREFIX = "mx_test_";
+    /** Chave de produção: só para comerciante com e-mail verificado (ApiKeyService). */
+    public static final String LIVE_PREFIX = "mx_live_";
 
     private static final int RANDOM_BYTES = 32;
     private static final int VISIBLE_RANDOM_CHARS = 4;
@@ -33,11 +35,16 @@ public final class ApiKeyGenerator {
     }
 
     public static GeneratedApiKey generate() {
+        return generate(false);
+    }
+
+    public static GeneratedApiKey generate(boolean live) {
         byte[] bytes = new byte[RANDOM_BYTES];
         RANDOM.nextBytes(bytes);
 
-        String plainText = TEST_PREFIX + ENCODER.encodeToString(bytes);
-        String displayPrefix = plainText.substring(0, TEST_PREFIX.length() + VISIBLE_RANDOM_CHARS);
+        String prefix = live ? LIVE_PREFIX : TEST_PREFIX;
+        String plainText = prefix + ENCODER.encodeToString(bytes);
+        String displayPrefix = plainText.substring(0, prefix.length() + VISIBLE_RANDOM_CHARS);
 
         return new GeneratedApiKey(plainText, displayPrefix, hash(plainText));
     }

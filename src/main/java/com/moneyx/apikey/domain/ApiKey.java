@@ -72,6 +72,11 @@ public class ApiKey {
         return revokedAt == null;
     }
 
+    /** Chave de produção (mx_live_). O modo faz parte do próprio segredo: o prefixo guardado o identifica. */
+    public boolean isLive() {
+        return keyPrefix.startsWith(ApiKeyGenerator.LIVE_PREFIX);
+    }
+
     public UUID getId() {
         return id;
     }

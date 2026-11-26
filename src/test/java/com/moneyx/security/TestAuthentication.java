@@ -20,6 +20,13 @@ public final class TestAuthentication {
     private TestAuthentication() {
     }
 
+    /** Comerciante ativo usando uma chave de PRODUÇÃO (mx_live_). */
+    public static RequestPostProcessor activeLiveMerchant(UUID merchantId) {
+        AuthenticatedMerchant principal = new AuthenticatedMerchant(merchantId, UUID.randomUUID(), true);
+        return authentication(UsernamePasswordAuthenticationToken.authenticated(
+                principal, null, List.of(new SimpleGrantedAuthority(SecurityConfig.ACTIVE_MERCHANT))));
+    }
+
     public static RequestPostProcessor activeMerchant(UUID merchantId) {
         AuthenticatedMerchant principal = new AuthenticatedMerchant(merchantId, UUID.randomUUID());
         return authentication(UsernamePasswordAuthenticationToken.authenticated(

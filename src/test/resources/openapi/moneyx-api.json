@@ -39,7 +39,7 @@
             }
           }
         },
-        "description" : "Comerciante suspenso ou encerrado."
+        "description" : "Proibido: comerciante suspenso ou encerrado, ou operação não permitida para esta chave/conta (ver `code`, ex.: `email_not_verified`, `sandbox_requires_test_key`)."
       },
       "NotFound" : {
         "content" : {
@@ -143,11 +143,25 @@
             "format" : "uuid",
             "type" : "string"
           },
+          "mode" : {
+            "type" : "string"
+          },
           "prefix" : {
             "type" : "string"
           },
           "revokedAt" : {
             "format" : "date-time",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "CreateApiKeyRequest" : {
+        "properties" : {
+          "mode" : {
+            "description" : "test (padrão) ou live",
+            "enum" : [ "test", "live" ],
+            "pattern" : "test|live",
             "type" : "string"
           }
         },
@@ -234,6 +248,9 @@
             "type" : "string"
           },
           "key" : {
+            "type" : "string"
+          },
+          "mode" : {
             "type" : "string"
           },
           "prefix" : {
@@ -350,6 +367,10 @@
           "email" : {
             "type" : "string"
           },
+          "emailVerifiedAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
           "id" : {
             "format" : "uuid",
             "type" : "string"
@@ -364,6 +385,9 @@
           "updatedAt" : {
             "format" : "date-time",
             "type" : "string"
+          },
+          "volumeLimits" : {
+            "$ref" : "#/components/schemas/VolumeLimits"
           }
         },
         "type" : "object"
@@ -483,6 +507,19 @@
           "type" : {
             "example" : "about:blank",
             "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "VolumeLimits" : {
+        "properties" : {
+          "daily" : {
+            "format" : "int64",
+            "type" : "integer"
+          },
+          "monthly" : {
+            "format" : "int64",
+            "type" : "integer"
           }
         },
         "type" : "object"
@@ -674,8 +711,17 @@
         "tags" : [ "API Keys" ]
       },
       "post" : {
-        "description" : "O segredo aparece **somente** nesta resposta. Máximo de 5 chaves ativas.",
+        "description" : "O segredo aparece **somente** nesta resposta. Máximo de 5 chaves ativas. Corpo opcional `{\"mode\": \"live\"}` cria uma chave de produção (`mx_live_`), que exige o e-mail verificado (senão 403 `email_not_verified`); sem corpo, chave de teste (`mx_test_`).",
         "operationId" : "createApiKey",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          }
+        },
         "responses" : {
           "201" : {
             "content" : {
@@ -686,6 +732,9 @@
               }
             },
             "description" : "Chave criada."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
           },
           "401" : {
             "$ref" : "#/components/responses/Unauthorized"
@@ -871,7 +920,7 @@
     },
     "/v1/merchants/me" : {
       "get" : {
-        "description" : "O comerciante é identificado pela API Key, nunca pela URL.",
+        "description" : "O comerciante é identificado pela API Key, nunca pela URL. Inclui `volumeLimits`: o limite acumulado de volume (centavos, por dia e por mês) que vale para ele.",
         "operationId" : "getCurrentMerchant",
         "responses" : {
           "200" : {
@@ -892,6 +941,66 @@
           }
         },
         "summary" : "Consultar o próprio comerciante",
+        "tags" : [ "Merchants" ]
+      }
+    },
+    "/v1/merchants/me/email-verification" : {
+      "post" : {
+        "description" : "Invalida os links anteriores. No máximo 1 por minuto (429 `verification_email_rate_limited` + `Retry-After`). Já verificado → 409 `email_already_verified`.",
+        "operationId" : "resendEmailVerification",
+        "responses" : {
+          "202" : {
+            "description" : "E-mail enviado (o envio acontece em seguida)."
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          },
+          "409" : {
+            "$ref" : "#/components/responses/Conflict"
+          }
+        },
+        "summary" : "Reenviar o e-mail de verificação",
+        "tags" : [ "Merchants" ]
+      }
+    },
+    "/v1/merchants/verify-email" : {
+      "get" : {
+        "description" : "Público. O token vem no link enviado no cadastro (uso único, 24 h). Repetir o link depois de confirmado responde 200. Link inválido/substituído → 400 `invalid_verification_token`; vencido → 400 `verification_token_expired`.",
+        "operationId" : "verifyEmail",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "token",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "E-mail confirmado."
+          },
+          "400" : {
+            "$ref" : "#/components/responses/BadRequest"
+          },
+          "401" : {
+            "$ref" : "#/components/responses/Unauthorized"
+          },
+          "403" : {
+            "$ref" : "#/components/responses/Forbidden"
+          }
+        },
+        "summary" : "Confirmar o e-mail (link do e-mail)",
         "tags" : [ "Merchants" ]
       }
     },
@@ -1107,7 +1216,7 @@
     },
     "/v1/sandbox/payments/{id}/pay" : {
       "post" : {
-        "description" : "SANDBOX: simula o pagador pagando o Pix. Só para cobranças do simulador local; uma cobrança de PSP real (ex.: Mercado Pago) responde 409 `sandbox_payment_not_supported`.",
+        "description" : "SANDBOX: simula o pagador pagando o Pix. Só para cobranças do simulador local; uma cobrança de PSP real (ex.: Mercado Pago) responde 409 `sandbox_payment_not_supported`. Só com chave de teste (`mx_test_`): chave `mx_live_` → 403 `sandbox_requires_test_key`.",
         "operationId" : "simulatePixPayment",
         "parameters" : [ {
           "in" : "path",

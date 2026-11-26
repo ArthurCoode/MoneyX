@@ -17,6 +17,9 @@ import java.util.UUID;
  *
  * Conta pagamentos CRIADOS e não cancelados (PENDING, PAID, EXPIRED), pela data de criação.
  *
+ * Limite: o do próprio comerciante (colunas da V15, ajustadas por SQL) ou, se vazio, o global
+ * (moneyx.payments.volume-limit.*). Lido na mesma consulta que tranca o comerciante.
+ *
  * Só é correto se o chamador já trancou a linha do comerciante na mesma transação
  * (PaymentRepository.lockMerchantForPaymentCreation): sem o lock, duas criações simultâneas leriam a mesma soma
  * e ambas passariam. Por isso exige transação (MANDATORY).
@@ -36,7 +39,7 @@ class PaymentVolumeLimit {
      * @throws VolumeLimitExceededException se {@code amount} não couber no mês ou no dia
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void check(UUID merchantId, long amount, Instant now) {
+    public void check(UUID merchantId, long amount, Instant now, VolumeLimits limits) {
         ZoneId zone = properties.zone();
         LocalDate today = LocalDate.ofInstant(now, zone);
 
@@ -46,10 +49,17 @@ class PaymentVolumeLimit {
         Instant nextDayStart = today.plusDays(1).atStartOfDay(zone).toInstant();
 
         // O mês primeiro: se os dois estourarem, "mensal" é a resposta útil (tentar amanhã também falharia).
-        ensureFits(Period.MONTHLY, properties.monthly(),
+        ensureFits(Period.MONTHLY, limits.monthly(),
                 paymentRepository.sumVolumeCreatedSince(merchantId, monthStart), amount, nextMonthStart);
-        ensureFits(Period.DAILY, properties.daily(),
+        ensureFits(Period.DAILY, limits.daily(),
                 paymentRepository.sumVolumeCreatedSince(merchantId, dayStart), amount, nextDayStart);
+    }
+
+    /** Limite efetivo: o do comerciante (V15) quando definido; senão o global da configuração. */
+    VolumeLimits effective(PaymentRepository.MerchantVolumeLimits merchant) {
+        return new VolumeLimits(
+                merchant.getDaily() != null ? merchant.getDaily() : properties.daily(),
+                merchant.getMonthly() != null ? merchant.getMonthly() : properties.monthly());
     }
 
     private static void ensureFits(Period period, long limit, long used, long amount, Instant resetsAt) {

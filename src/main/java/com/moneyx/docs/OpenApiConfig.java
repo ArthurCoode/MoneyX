@@ -83,7 +83,7 @@ public class OpenApiConfig {
                         .addResponses("BadRequest", problem("Requisição inválida (campos, parâmetros ou JSON)."))
                         .addResponses("Unauthorized", problem("API Key ausente, inválida ou revogada.")
                                 .addHeaderObject("WWW-Authenticate", new Header().schema(new StringSchema()._default("Bearer"))))
-                        .addResponses("Forbidden", problem("Comerciante suspenso ou encerrado."))
+                        .addResponses("Forbidden", problem("Proibido: comerciante suspenso ou encerrado, ou operação não permitida para esta chave/conta (ver `code`, ex.: `email_not_verified`, `sandbox_requires_test_key`)."))
                         .addResponses("NotFound", problem("Recurso inexistente ou de outro comerciante (indistinguíveis de propósito)."))
                         .addResponses("Conflict", problem("Regra de negócio violada; veja `code`."))
                         .addResponses("UnprocessableContent", problem("Idempotency-Key já usada com outro corpo (`idempotency_key_reused`) ou limite de volume do dia/mês atingido (`volume_limit_exceeded`, com `period`, `limit`, `remaining` e `resetsAt`)."))

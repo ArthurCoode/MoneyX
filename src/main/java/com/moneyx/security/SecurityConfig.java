@@ -4,7 +4,11 @@ import com.moneyx.apikey.service.ApiKeyService;
 import com.moneyx.merchant.service.MerchantService;
 import com.moneyx.security.ratelimit.SignupRateLimitFilter;
 import com.moneyx.security.ratelimit.SignupRateLimitProperties;
+import com.moneyx.security.ratelimit.RateLimiter;
+import com.moneyx.security.ratelimit.RedisTokenBucketRateLimiter;
 import com.moneyx.security.ratelimit.TokenBucketRateLimiter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -84,9 +88,19 @@ public class SecurityConfig {
      * de fatia web (@WebMvcTest), em que o ClockConfig não é carregado, usa o relógio do sistema.
      */
     @Bean
-    public TokenBucketRateLimiter signupRateLimiter(SignupRateLimitProperties properties, ObjectProvider<Clock> clock) {
-        return new TokenBucketRateLimiter(properties.capacity(), properties.refillPeriod(), properties.maxKeys(),
-                clock.getIfAvailable(Clock::systemUTC));
+    public RateLimiter signupRateLimiter(SignupRateLimitProperties properties, ObjectProvider<Clock> clock,
+                                         @Value("${moneyx.rate-limit.store:memory}") String store,
+                                         ObjectProvider<StringRedisTemplate> redis) {
+        Clock time = clock.getIfAvailable(Clock::systemUTC);
+        return switch (store) {
+            // Compartilhado entre instâncias (Redis do Compose). Recomendado com mais de uma instância da app.
+            case "redis" -> new RedisTokenBucketRateLimiter(redis.getObject(), "moneyx:ratelimit:signup:",
+                    properties.capacity(), properties.refillPeriod(), time);
+            case "memory" -> new TokenBucketRateLimiter(properties.capacity(), properties.refillPeriod(),
+                    properties.maxKeys(), time);
+            default -> throw new IllegalArgumentException(
+                    "moneyx.rate-limit.store must be memory or redis, got: " + store);
+        };
     }
 
     @Bean
@@ -94,7 +108,7 @@ public class SecurityConfig {
             HttpSecurity http,
             ApiKeyService apiKeyService,
             MerchantService merchantService,
-            TokenBucketRateLimiter signupRateLimiter,
+            RateLimiter signupRateLimiter,
             // Nos testes de fatia web (@WebMvcTest) não há métricas configuradas: usa um registro em memória.
             ObjectProvider<MeterRegistry> meterRegistry,
             // Existem vários HandlerExceptionResolver no contexto; este é o principal do Spring MVC.
@@ -126,6 +140,8 @@ public class SecurityConfig {
                         // seria mascarado como 401, pois o contexto de segurança não é guardado em sessão.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/merchants").permitAll()
+                        // Link do e-mail de verificação: quem abre ainda não tem a chave à mão. O token é o segredo.
+                        .requestMatchers(HttpMethod.GET, "/v1/merchants/verify-email").permitAll()
                         // Avisos do PSP (Mercado Pago): sem API Key; autenticados pela assinatura x-signature no controller.
                         .requestMatchers(HttpMethod.POST, "/v1/provider-webhooks/mercadopago").permitAll()
                         // Actuator (health, metrics, prometheus): só existe na PORTA DE GERENCIAMENTO (8081, ouvindo

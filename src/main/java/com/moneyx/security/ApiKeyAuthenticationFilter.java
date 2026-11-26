@@ -106,7 +106,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                 ? List.of(new SimpleGrantedAuthority(SecurityConfig.ACTIVE_MERCHANT))
                 : List.of();
 
-        AuthenticatedMerchant principal = new AuthenticatedMerchant(merchant.getId(), apiKey.getId());
+        AuthenticatedMerchant principal = new AuthenticatedMerchant(merchant.getId(), apiKey.getId(), apiKey.isLive());
 
         // Apesar do nome, UsernamePasswordAuthenticationToken é a implementação genérica de
         // Authentication do Spring Security. "authenticated(...)" marca a identidade como já

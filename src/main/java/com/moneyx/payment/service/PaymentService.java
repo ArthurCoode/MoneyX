@@ -146,7 +146,7 @@ public class PaymentService {
         // merchants (pega FOR KEY SHARE). Duas proteções contra deadlock: a ordem (trava antes do KEY SHARE) e o modo
         // da trava (FOR NO KEY UPDATE não conflita com KEY SHARE). Provado por mutação: só com as DUAS removidas
         // (FOR UPDATE depois da reserva) as criações simultâneas entram em deadlock. Repetições também passam por aqui.
-        paymentRepository.lockMerchantForPaymentCreation(merchantId)
+        PaymentRepository.MerchantVolumeLimits merchantLimits = paymentRepository.lockMerchantForPaymentCreation(merchantId)
                 .orElseThrow(() -> new IllegalStateException("Authenticated merchant not found"));
 
         int reserved = idempotencyKeyRepository.reserve(
@@ -161,7 +161,7 @@ public class PaymentService {
         if (reserved == 1) {
             // Só pagamentos NOVOS contam (uma repetição não soma de novo nem é recusada). Se estourar, a exceção
             // desfaz também a reserva da chave: o cliente pode tentar de novo depois com a mesma chave.
-            volumeLimit.check(merchantId, payment.getAmount(), now);
+            volumeLimit.check(merchantId, payment.getAmount(), now, volumeLimit.effective(merchantLimits));
             // O pedido ao PSP é montado UMA vez e gravado: toda repetição reenvia o mesmo (V14).
             payment.recordProviderRequest(pixProvider.prepareCharge(chargeRequestOf(payment)));
             paymentRepository.save(payment);

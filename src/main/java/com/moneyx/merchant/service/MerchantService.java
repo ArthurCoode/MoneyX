@@ -33,11 +33,14 @@ public class MerchantService {
 
     private final MerchantRepository repository;
     private final ApiKeyService apiKeyService;
+    private final EmailVerificationService emailVerification;
 
     // Injeção via construtor: dependência explícita, campo final e fácil de testar com mocks.
-    public MerchantService(MerchantRepository repository, ApiKeyService apiKeyService) {
+    public MerchantService(MerchantRepository repository, ApiKeyService apiKeyService,
+                           EmailVerificationService emailVerification) {
         this.repository = repository;
         this.apiKeyService = apiKeyService;
+        this.emailVerification = emailVerification;
     }
 
     /**
@@ -48,6 +51,8 @@ public class MerchantService {
     public MerchantRegistration register(String legalName, String document, String email) {
         Merchant merchant = createMerchant(legalName, document, email);
         IssuedApiKey apiKey = apiKeyService.issueFor(merchant.getId());
+        // Link de verificação do e-mail (sai depois do commit). Sem e-mail verificado, só chaves mx_test_.
+        emailVerification.requestFor(merchant);
         // Só ids: documento, e-mail e a chave NUNCA vão para o log.
         log.info("merchant.registered merchant={} apiKey={}", merchant.getId(), apiKey.apiKey().getId());
         return new MerchantRegistration(merchant, apiKey);
